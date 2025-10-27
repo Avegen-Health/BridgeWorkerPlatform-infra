@@ -2,7 +2,7 @@ template_path: bridgeworker.yaml
 stack_name: bridgeworker-uat
 parameters:
   AwsDefaultVpcId: vpc-f389e98a
-  AwsSnsNotificationEndpoint: bridgeworker-uat@sagebase.org
+  AwsSnsNotificationEndpoint: akash.shinde@avegenhealth.com
   BackfillBucket: org-sagebridge-backfill-devstaging
   BridgeEnv: uat
   BridgeUser: heroku

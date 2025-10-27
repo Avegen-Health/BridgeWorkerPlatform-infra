@@ -9,17 +9,19 @@ branches:
   - uat
   - prod
 install:
-  - wget https://github.com/Sage-Bionetworks/infra-utils/archive/refs/tags/v1.0.9.zip -O /tmp/infra-utils.zip
-  - unzip -j -n /tmp/infra-utils.zip -x "infra-utils-1.0.9/.gitignore" "infra-utils-1.0.9/LICENSE" "infra-utils-1.0.9/*.md" "infra-utils-1.0.9/aws/*"
-  - ./setup_aws_cli.sh || travis_terminate 1
-  - pip install cfn-lint sceptre sceptre-ssm-resolver
+- wget https://github.com/Sage-Bionetworks/infra-utils/archive/refs/tags/v1.0.9.zip
+  -O /tmp/infra-utils.zip
+- unzip -j -n /tmp/infra-utils.zip -x "infra-utils-1.0.9/.gitignore" "infra-utils-1.0.9/LICENSE"
+  "infra-utils-1.0.9/*.md" "infra-utils-1.0.9/aws/*"
+- "./setup_aws_cli.sh || travis_terminate 1"
+- pip install "git+https://github.com/seperman/deepdiff.git#egg=deepdiff" aws-sam-translator>=1.50.0 cfn-lint sceptre sceptre-ssm-resolver
 stages:
-  - name: validate
-  - name: deploy
-    if: type = push
+- name: validate
+- name: deploy
+  if: type = push
 jobs:
   include:
-    - stage: validate
-      script: cfn-lint ./templates/**/*
-    - stage: deploy
-      script: sceptre launch $TRAVIS_BRANCH --yes
+  - stage: validate
+    script: cfn-lint ./templates/**/*
+  - stage: deploy
+    script: sceptre launch $TRAVIS_BRANCH --yes
