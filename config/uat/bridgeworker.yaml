@@ -1,25 +1,25 @@
 template_path: bridgeworker.yaml
 stack_name: bridgeworker-uat
 parameters:
-  AwsDefaultVpcId: vpc-f389e98a
+  AwsDefaultVpcId: vpc-06153fdc5047df63c
   AwsSnsNotificationEndpoint: akash.shinde@avegenhealth.com
-  BackfillBucket: org-sagebridge-backfill-devstaging
+  BackfillBucket: org-gvbridge-backfill-devstaging
   BridgeEnv: uat
   BridgeUser: heroku
-  BridgeWorkerEmail: bridgeit+worker@sagebase.org
+  BridgeWorkerEmail: akash.shinde@avegenhealth.com
   BridgeWorkerStudy: api
   BridgeWorkerPassword: !ssm /bridgeworker-uat/BridgeWorkerPassword
   EC2InstanceType: t3a.medium
   Env: staging
   NewRelicAppName: bridgeworker-uat
   NewRelicLicenseKey: !ssm /infra/NewRelicLicenseKey
-  RawHealthDataBucket: org-sagebridge-rawhealthdata-devstaging
+  RawHealthDataBucket: org-gvbridge-rawhealthdata-devstaging
   SynapseAccessToken:  !ssm /bridgeworker-uat/SynapseAccessToken
   SynapsePrincipalId: '3336429'
   SynapseUser: bridgetest
-  UploadBucket: org-sagebridge-upload-devstaging
-  UploadCertBucket: org-sagebridge-upload-cms-cert-devstaging
-  UploadPrivateKeyBucket: org-sagebridge-upload-cms-priv-devstaging
-  UserDataBucket: org-sagebridge-userdata-devstaging
-  ParticipantRosterBucket: org-sagebridge-participantroster-devstaging
-  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/420786776710/Bridge-WorkerPlatform-Request-staging
+  UploadBucket: org-gvbridge-upload-devstaging
+  UploadCertBucket: org-gvbridge-upload-cms-cert-devstaging
+  UploadPrivateKeyBucket: org-gvbridge-upload-cms-priv-devstaging
+  UserDataBucket: org-gvbridge-userdata-devstaging
+  ParticipantRosterBucket: org-gvbridge-participantroster-devstaging
+  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-WorkerPlatform-Request-staging
