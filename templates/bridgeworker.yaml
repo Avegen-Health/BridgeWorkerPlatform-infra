@@ -63,6 +63,7 @@ Parameters:
 Resources:
   AWSEBConfigurationTemplate:
     Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
+    # DependsOn: AWSEC2SecurityGroup
     Properties:
       ApplicationName: !Ref AWSEBApplication
       SolutionStackName: '64bit Amazon Linux 2 v4.9.7 running Tomcat 9 Corretto 8'
@@ -77,12 +78,9 @@ Resources:
         - Namespace: 'aws:autoscaling:launchconfiguration'
           OptionName: InstanceType
           Value: !Ref EC2InstanceType
-        - Namespace: 'aws:autoscaling:launchconfiguration'
-          OptionName: SecurityGroups
-          Value: !Join
-            - '-'
-            - - !Ref 'AWS::StackName'
-              - AWSEC2SecurityGroup
+        # - Namespace: 'aws:autoscaling:launchconfiguration'
+        #   OptionName: SecurityGroups
+        #   Value: !Ref AWSEC2SecurityGroup
         - Namespace: 'aws:elasticbeanstalk:command'
           OptionName: DeploymentPolicy
           Value: 'AllAtOnce'
@@ -346,7 +344,7 @@ Resources:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
       GroupDescription: Load Balancer Security Group
-      VpcId: !Ref AwsDefaultVpcId
+      VpcId: !ImportValue us-east-1-bridge-vpc-with-subnets-VPC
       SecurityGroupIngress:
         - CidrIp: 0.0.0.0/0
           FromPort: 443
@@ -369,7 +367,7 @@ Resources:
         - - !Ref 'AWS::StackName'
           - AWSEC2SecurityGroup
       GroupDescription: EC2 Security Group
-      VpcId: !Ref AwsDefaultVpcId
+      VpcId: !ImportValue us-east-1-bridge-vpc-with-subnets-VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
