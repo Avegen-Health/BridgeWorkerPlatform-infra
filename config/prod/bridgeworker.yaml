@@ -1,9 +1,9 @@
 template_path: bridgeworker.yaml
 stack_name: bridgeworker-prod
 parameters:
-  AwsDefaultVpcId: vpc-9c70bbf9
+  AwsDefaultVpcId: vpc-06153fdc5047df63c
   AwsSnsNotificationEndpoint: bridgeworker-prod@sagebase.org
-  BackfillBucket: org-sagebridge-backfill-prod
+  BackfillBucket: org-gvbridge-backfill-prod
   BridgeEnv: prod
   BridgeUser: heroku
   BridgeWorkerEmail: bridgeit+worker@sagebase.org
@@ -14,13 +14,13 @@ parameters:
   JavaHeapSize: 24g
   NewRelicAppName: bridgeworker-prod
   NewRelicLicenseKey: !ssm /infra/NewRelicLicenseKey
-  RawHealthDataBucket: org-sagebridge-rawhealthdata-prod
+  RawHealthDataBucket: org-gvbridge-rawhealthdata-prod
   SynapseAccessToken: !ssm /bridgeworker-prod/SynapseAccessToken
   SynapsePrincipalId: '3325672'
   SynapseUser: BridgeExporter
-  UploadBucket: org-sagebridge-upload-prod
-  UploadCertBucket: org-sagebridge-upload-cms-cert-prod
-  UploadPrivateKeyBucket: org-sagebridge-upload-cms-priv-prod
-  UserDataBucket: org-sagebridge-userdata-prod
-  ParticipantRosterBucket: org-sagebridge-participantroster-prod
-  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/649232250620/Bridge-WorkerPlatform-Request-prod
+  UploadBucket: org-gvbridge-upload-prod
+  UploadCertBucket: org-gvbridge-upload-cms-cert-prod
+  UploadPrivateKeyBucket: org-gvbridge-upload-cms-priv-prod
+  UserDataBucket: org-gvbridge-userdata-prod
+  ParticipantRosterBucket: org-gvbridge-participantroster-prod
+  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-WorkerPlatform-Request-prod
