@@ -14,7 +14,7 @@ install:
 - unzip -j -n /tmp/infra-utils.zip -x "infra-utils-1.0.9/.gitignore" "infra-utils-1.0.9/LICENSE"
   "infra-utils-1.0.9/*.md" "infra-utils-1.0.9/aws/*"
 - "./setup_aws_cli.sh || travis_terminate 1"
-- pip install deepdiff aws-sam-translator>=1.50.0 cfn-lint "sceptre<4" sceptre-ssm-resolver
+- pip install "git+https://github.com/seperman/deepdiff.git#egg=deepdiff" aws-sam-translator>=1.50.0 cfn-lint sceptre sceptre-ssm-resolver
 stages:
 - name: validate
 - name: deploy
