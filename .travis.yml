@@ -17,7 +17,10 @@ install:
 - pip install --upgrade pip setuptools wheel
 - pip install PyYAML==6.0.1
 - pip install deepdiff@git+https://github.com/seperman/deepdiff.git
-- pip install aws-sam-translator>=1.50.0 cfn-lint sceptre>=4 sceptre-ssm-resolver
+- pip install aws-sam-translator>=1.50.0
+- pip install cfn-lint
+- pip install sceptre>=4
+- pip install sceptre-ssm-resolver
 stages:
 - name: validate
 - name: deploy
