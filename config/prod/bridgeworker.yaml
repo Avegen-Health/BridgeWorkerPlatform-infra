@@ -1,26 +1,25 @@
 template_path: bridgeworker.yaml
 stack_name: bridgeworker-prod
 parameters:
-  AwsDefaultVpcId: vpc-9c70bbf9
-  AwsSnsNotificationEndpoint: bridgeworker-prod@sagebase.org
-  BackfillBucket: org-sagebridge-backfill-prod
+  AwsDefaultVpcId: vpc-0dc0283c11575e03b
+  AwsSnsNotificationEndpoint: bridge+prod_ops_notif@avegenhealth.com
+  BackfillBucket: org-gvbridge-backfill-prod
   BridgeEnv: prod
   BridgeUser: heroku
-  BridgeWorkerEmail: bridgeit+worker@sagebase.org
+  BridgeWorkerEmail: bridge@avegenhealth.com
   BridgeWorkerStudy: api
   BridgeWorkerPassword: !ssm /bridgeworker-prod/BridgeWorkerPassword
-  EC2InstanceType: t3a.2xlarge
+  EC2InstanceType: t3a.medium
   Env: production
-  JavaHeapSize: 24g
-  NewRelicAppName: bridgeworker-prod
+  NewRelicAppName: bridgeserver-key
   NewRelicLicenseKey: !ssm /infra/NewRelicLicenseKey
-  RawHealthDataBucket: org-sagebridge-rawhealthdata-prod
-  SynapseAccessToken: !ssm /bridgeworker-prod/SynapseAccessToken
-  SynapsePrincipalId: '3325672'
-  SynapseUser: BridgeExporter
-  UploadBucket: org-sagebridge-upload-prod
-  UploadCertBucket: org-sagebridge-upload-cms-cert-prod
-  UploadPrivateKeyBucket: org-sagebridge-upload-cms-priv-prod
-  UserDataBucket: org-sagebridge-userdata-prod
-  ParticipantRosterBucket: org-sagebridge-participantroster-prod
-  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/649232250620/Bridge-WorkerPlatform-Request-prod
+  RawHealthDataBucket: org-gvbridge-rawhealthdata-prod
+  SynapseAccessToken:  !ssm /bridgeworker-prod/SynapseAccessToken
+  SynapsePrincipalId: '3591871'
+  SynapseUser: bridge-exporter-prod-avegen
+  UploadBucket: org-gvbridge-upload-prod
+  UploadCertBucket: org-gvbridge-upload-cms-cert-prod
+  UploadPrivateKeyBucket: org-gvbridge-upload-cms-priv-prod
+  UserDataBucket: org-gvbridge-userdata-prod
+  ParticipantRosterBucket: org-gvbridge-participantroster-prod
+  WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/233151233756/Bridge-WorkerPlatform-Request-prod
