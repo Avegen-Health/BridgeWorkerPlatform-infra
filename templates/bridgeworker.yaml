@@ -66,7 +66,7 @@ Resources:
     # DependsOn: AWSEC2SecurityGroup
     Properties:
       ApplicationName: !Ref AWSEBApplication
-      SolutionStackName: '64bit Amazon Linux 2023 v5.14.0 running Tomcat 9 Corretto 8'
+      SolutionStackName: '64bit Amazon Linux 2 v4.13.3 running Tomcat 9 Corretto 8'
       OptionSettings:
         # EB environment options
         - Namespace: 'aws:elasticbeanstalk:xray'
@@ -191,6 +191,13 @@ Resources:
   AWSS3AppDeployBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
+      # EB's platform-hooks/deploy worker uploads bundles with bucket-owner-full-control ACLs,
+      # so the deploy bucket cannot be BucketOwnerEnforced (which blocks ACLs entirely).
+      # Use BucketOwnerPreferred: ACLs still work, and any ACL-tagged uploads are auto-owned
+      # by the bucket owner. New AWS accounts default new buckets to Enforced, hence the explicit setting.
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
