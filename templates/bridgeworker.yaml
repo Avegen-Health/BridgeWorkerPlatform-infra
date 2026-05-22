@@ -66,7 +66,7 @@ Resources:
     # DependsOn: AWSEC2SecurityGroup
     Properties:
       ApplicationName: !Ref AWSEBApplication
-      SolutionStackName: '64bit Amazon Linux 2 v4.9.7 running Tomcat 9 Corretto 8'
+      SolutionStackName: '64bit Amazon Linux 2 v4.13.3 running Tomcat 9 Corretto 8'
       OptionSettings:
         # EB environment options
         - Namespace: 'aws:elasticbeanstalk:xray'
