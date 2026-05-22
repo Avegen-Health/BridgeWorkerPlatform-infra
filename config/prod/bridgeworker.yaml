@@ -6,7 +6,7 @@ parameters:
   BackfillBucket: org-gvbridge-backfill-prod
   BridgeEnv: prod
   BridgeUser: heroku
-  BridgeWorkerEmail: bridge@avegenhealth.com
+  BridgeWorkerEmail: bridge+bsmworker@avegenhealth.com
   BridgeWorkerStudy: api
   BridgeWorkerPassword: !ssm /bridgeworker-prod/BridgeWorkerPassword
   EC2InstanceType: t3a.medium
