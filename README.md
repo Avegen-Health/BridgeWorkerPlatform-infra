@@ -32,3 +32,4 @@ We have configured Travis to deploy CF template updates.  Travis deploys using
 to store secrets for this project.  Sceptre retrieves the secrets using
 a [sceptre ssm resolver](https://github.com/cloudreach/sceptre/tree/v1/contrib/ssm-resolver)
 and passes them to the cloudformation stack on deployment.
+
