@@ -58,6 +58,16 @@ Parameters:
     Type: String
   ParticipantRosterBucket:
     Type: String
+  BridgeServer:
+    Type: String
+    Description: URL of the Bridge server (e.g. https://bridge-uat.grip-research.org)
+  S3NotificationSqsQueueUrl:
+    Type: String
+    Description: SQS queue URL for S3 upload-complete notifications
+  SynapseEndpoint:
+    Type: String
+    Default: https://repo-prod.prod.sagebase.org/
+    Description: Synapse REST endpoint (prod or dev)
   WorkerSqsQueueUrl:
     Type: String
 Resources:
@@ -151,6 +161,18 @@ Resources:
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: synapse.user
           Value: !Ref SynapseUser
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: bridge.server
+          Value: !Ref BridgeServer
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: synapse.endpoint
+          Value: !Ref SynapseEndpoint
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.s3.notification.sqs.queue.url'
+          Value: !Ref S3NotificationSqsQueueUrl
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: !Join
             - ''
