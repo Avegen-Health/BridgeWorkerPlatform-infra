@@ -14,9 +14,12 @@ parameters:
   NewRelicAppName: bridgeworker-uat
   NewRelicLicenseKey: !ssm /infra/NewRelicLicenseKey
   RawHealthDataBucket: org-gvbridge-rawhealthdata-devstaging
+  BridgeServer: https://bridge-uat.grip-research.org
+  S3NotificationSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-UploadComplete-Notification-staging
   SynapseAccessToken:  !ssm /bridgeworker-uat/SynapseAccessToken
-  SynapsePrincipalId: '3336429'
-  SynapseUser: bridgetest
+  SynapseEndpoint: https://repo-prod.prod.sagebase.org/
+  SynapsePrincipalId: '3573485'
+  SynapseUser: bridge-exporter-uat
   UploadBucket: org-gvbridge-upload-devstaging
   UploadCertBucket: org-gvbridge-upload-cms-cert-devstaging
   UploadPrivateKeyBucket: org-gvbridge-upload-cms-priv-devstaging
