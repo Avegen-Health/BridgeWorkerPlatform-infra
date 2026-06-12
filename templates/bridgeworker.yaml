@@ -88,6 +88,18 @@ Resources:
         - Namespace: 'aws:autoscaling:launchconfiguration'
           OptionName: InstanceType
           Value: !Ref EC2InstanceType
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: VPCId
+          Value: !ImportValue us-east-1-bridge-vpc-with-subnets-VPC
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: Subnets
+          Value: !Join
+            - ','
+            - - !ImportValue us-east-1-bridge-vpc-with-subnets-PrivateSubnet1
+              - !ImportValue us-east-1-bridge-vpc-with-subnets-PrivateSubnet2
+        - Namespace: 'aws:ec2:vpc'
+          OptionName: AssociatePublicIpAddress
+          Value: 'false'
         # - Namespace: 'aws:autoscaling:launchconfiguration'
         #   OptionName: SecurityGroups
         #   Value: !Ref AWSEC2SecurityGroup
@@ -282,6 +294,7 @@ Resources:
             Effect: Allow
             Resource:
               - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+              - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/*'
   # cloudwatch integration https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/AWSHowTo.cloudwatchlogs.html
   AWSIAMCloudwatchIntegrationManagedPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
