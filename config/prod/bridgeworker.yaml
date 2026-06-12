@@ -13,7 +13,7 @@ parameters:
   Env: production
   NewRelicAppName: bridgeserver-key
   NewRelicLicenseKey: !ssm /infra/NewRelicLicenseKey
-  RawHealthDataBucket: org-gvbridge-rawhealthdata-prod
+  RawHealthDataBucket: org-gvbridge-rawhealthdata-prod-synapse
   BridgeServer: https://bridge.grip-research.org
   S3NotificationSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/233151233756/Bridge-UploadComplete-Notification-prod
   SynapseAccessToken:  !ssm /bridgeworker-prod/SynapseAccessToken
