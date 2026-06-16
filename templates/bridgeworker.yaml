@@ -665,6 +665,23 @@ Resources:
       Statistic: SampleCount
       TreatMissingData: breaching
 
+  AWSCWDiskUsageAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AWSSNSTopic
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      Threshold: 80
+      TreatMissingData: notBreaching
+      Metrics:
+        - Id: disk_max
+          Expression: "SELECT MAX(disk_used_percent) FROM SCHEMA(\"CWAgent\", device, fstype, host, path) WHERE path = '/'"
+          Period: 300
+          ReturnData: true
+          Label: MaxDiskUsedPercent
+
 Outputs:
   AWSSNSTopic:
     Value: !Ref AWSSNSTopic
