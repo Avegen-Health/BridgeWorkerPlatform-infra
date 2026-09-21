@@ -1,0 +1,7 @@
+template_path: addf-export.yaml
+stack_name: bridgeworker-addf-export-uat
+parameters:
+  BridgeEnv: uat
+  OpsNotificationEndpoint: bridgeworker-uat@sagebase.org
+  VisibilityTimeout: '300'
+  MaxReceiveCount: '5'

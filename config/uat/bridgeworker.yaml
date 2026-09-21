@@ -23,3 +23,13 @@ parameters:
   UserDataBucket: org-sagebridge-userdata-devstaging
   ParticipantRosterBucket: org-sagebridge-participantroster-devstaging
   WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/420786776710/Bridge-WorkerPlatform-Request-staging
+  # ADDF export - queue/bucket created by the bridgeworker-addf-export-uat stack (deploy it first)
+  AddfExportStoreBucket: org-gvbridge-addf-exportstore-uat
+  AddfExportRequestSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-Request-uat
+  AddfExportDlqSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-DLQ-uat
+  # Blocked on ADDI: replace placeholder with the real Azure staging container URL before enabling publish
+  AddfAzureContainerUrl: PLACEHOLDER_BLOCKED_ON_ADDI
+  AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
+  AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
+  AddfExportEnabled: 'false'
+  AddfPublishEnabled: 'false'

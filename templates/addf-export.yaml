@@ -1,0 +1,143 @@
+Description: ADDF Export foundation - SQS request queue + DLQ, S3 export store, ops alerting
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  BridgeEnv:
+    Type: String
+    Description: Bridge environment token used in resource names (e.g. dev, uat, prod)
+  OpsNotificationEndpoint:
+    Type: String
+    Description: Email address subscribed to the ADDF ops SNS topic (DLQ alarm)
+  VisibilityTimeout:
+    Type: Number
+    Description: Request-queue visibility timeout in seconds; must exceed worst-case per-record processing
+    Default: 300
+  MaxReceiveCount:
+    Type: Number
+    Description: Deliveries attempted before a message is moved to the DLQ
+    Default: 5
+  RequestQueueRetentionSeconds:
+    Type: Number
+    Description: Request-queue message retention (default 4 days)
+    Default: 345600
+  DlqRetentionSeconds:
+    Type: Number
+    Description: DLQ message retention (max 14 days) so poison messages survive investigation
+    Default: 1209600
+Resources:
+  # ---- SQS: request queue + dead-letter queue ------------------------------
+  AddfExportDlq:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub 'Bridge-ADDF-Export-DLQ-${BridgeEnv}'
+      MessageRetentionPeriod: !Ref DlqRetentionSeconds
+      SqsManagedSseEnabled: true
+      RedriveAllowPolicy: !Sub |
+        {
+          "redrivePermission": "byQueue",
+          "sourceQueueArns": ["arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-Request-${BridgeEnv}"]
+        }
+  AddfExportRequestQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub 'Bridge-ADDF-Export-Request-${BridgeEnv}'
+      VisibilityTimeout: !Ref VisibilityTimeout
+      MessageRetentionPeriod: !Ref RequestQueueRetentionSeconds
+      SqsManagedSseEnabled: true
+      RedrivePolicy: !Sub
+        - '{"deadLetterTargetArn":"${DlqArn}","maxReceiveCount":${MaxReceiveCount}}'
+        - DlqArn: !GetAtt AddfExportDlq.Arn
+  # ---- S3: export store (cleanup-exempt) -----------------------------------
+  AddfExportStoreBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'org-gvbridge-addf-exportstore-${BridgeEnv}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: project
+          Value: ADDF
+        - Key: data-classification
+          Value: phi
+        - Key: cleanup-exempt
+          Value: 'true'
+  AddfExportStoreBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref AddfExportStoreBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt AddfExportStoreBucket.Arn
+              - !Sub '${AddfExportStoreBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+  # ---- Ops alerting: SNS topic + DLQ alarm ---------------------------------
+  AddfOpsSnsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+        - Endpoint: !Ref OpsNotificationEndpoint
+          Protocol: email
+  AddfDlqNotEmptyAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-Export-DLQ-${BridgeEnv}-NotEmpty'
+      AlarmDescription: A message landed in the ADDF export DLQ - a poison record failed processing.
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AddfOpsSnsTopic
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AddfExportDlq.QueueName
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Maximum
+      TreatMissingData: notBreaching
+Outputs:
+  RequestQueueUrl:
+    Value: !Ref AddfExportRequestQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-RequestQueueUrl'
+  RequestQueueArn:
+    Value: !GetAtt AddfExportRequestQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RequestQueueArn'
+  DlqUrl:
+    Value: !Ref AddfExportDlq
+    Export:
+      Name: !Sub '${AWS::StackName}-DlqUrl'
+  DlqArn:
+    Value: !GetAtt AddfExportDlq.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DlqArn'
+  ExportStoreBucket:
+    Value: !Ref AddfExportStoreBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ExportStoreBucket'
+  ExportStoreBucketArn:
+    Value: !GetAtt AddfExportStoreBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExportStoreBucketArn'
+  OpsSnsTopic:
+    Value: !Ref AddfOpsSnsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-OpsSnsTopic'
