@@ -2,7 +2,7 @@ template_path: bridgeworker.yaml
 stack_name: bridgeworker-uat
 parameters:
   AwsDefaultVpcId: vpc-06153fdc5047df63c
-  AwsSnsNotificationEndpoint: akash.shinde@avegenhealth.com
+  AwsSnsNotificationEndpoint: bridge+uat_sns_notif@avegenhealth.com
   BackfillBucket: org-gvbridge-backfill-devstaging
   BridgeEnv: uat
   BridgeUser: heroku
