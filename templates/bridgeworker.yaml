@@ -60,6 +60,34 @@ Parameters:
     Type: String
   WorkerSqsQueueUrl:
     Type: String
+  # ---- ADDF Export ---------------------------------------------------------
+  AddfExportStoreBucket:
+    Type: String
+    Description: ADDF export-store bucket name (created by the addf-export stack)
+  AddfExportRequestSqsQueueUrl:
+    Type: String
+    Description: ADDF export request queue URL (created by the addf-export stack)
+  AddfExportDlqSqsQueueUrl:
+    Type: String
+    Description: ADDF export DLQ URL (for redrive/monitoring tooling)
+  AddfAzureContainerUrl:
+    Type: String
+    Description: Azure Blob staging container URL (non-secret, ADDI-provided)
+  AddfBlobSasToken:
+    Type: String
+    NoEcho: true
+    Description: SAS token for the Azure staging container (resolved from SSM at deploy)
+  AddfBlobSasExpiry:
+    Type: String
+    Description: SAS token expiry date (read by the Phase 6 pre-expiry alarm)
+  AddfExportEnabled:
+    Type: String
+    Default: 'false'
+    Description: Kill-switch - accumulate/export worker runs only when true
+  AddfPublishEnabled:
+    Type: String
+    Default: 'false'
+    Description: Kill-switch - AzCopy publish to Azure runs only when true
 Resources:
   AWSEBConfigurationTemplate:
     Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
@@ -163,6 +191,48 @@ Resources:
             - - !Ref BridgeEnv
               - '.workerPlatform.request.sqs.queue.url'
           Value: !Ref WorkerSqsQueueUrl
+        # ---- ADDF Export env ----
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.export.request.sqs.queue.url'
+          Value: !Ref AddfExportRequestSqsQueueUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.export.dlq.sqs.queue.url'
+          Value: !Ref AddfExportDlqSqsQueueUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.exportstore.bucket'
+          Value: !Ref AddfExportStoreBucket
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.azure.container.url'
+          Value: !Ref AddfAzureContainerUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.azure.sas.token
+          Value: !Ref AddfBlobSasToken
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.azure.sas.expiry
+          Value: !Ref AddfBlobSasExpiry
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.export.enabled
+          Value: !Ref AddfExportEnabled
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.publish.enabled
+          Value: !Ref AddfPublishEnabled
+        # Allocation id of the dedicated ADDF-egress EIP, consumed by the
+        # app-side ebextensions association hook (eip-associate.config).
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: ADDF_EGRESS_EIP_ALLOCATION_ID
+          Value: !GetAtt AddfEgressEip.AllocationId
   AWSEBApplication:
     Type: 'AWS::ElasticBeanstalk::Application'
     Properties:
@@ -248,6 +318,64 @@ Resources:
               - !Sub 'arn:aws:s3:::${UploadPrivateKeyBucket}/*'
               - !Sub 'arn:aws:s3:::${UserDataBucket}/*'
               - !Sub 'arn:aws:s3:::${ParticipantRosterBucket}/*'
+  # ADDF export-store bucket: workers read raw, write derived tables, coalesce & clean up staging
+  AWSIAMAddfExportStoreManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+                - 's3:DeleteObject'
+              Resource:
+                - !Sub 'arn:aws:s3:::${AddfExportStoreBucket}/*'
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                - !Sub 'arn:aws:s3:::${AddfExportStoreBucket}'
+  # ADDF request queue (consume) + DLQ (redrive). Scoped; the worker-tier managed
+  # policy already permits SQS broadly - this documents and narrows intent.
+  AWSIAMAddfSqsManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:ReceiveMessage'
+                - 'sqs:DeleteMessage'
+                - 'sqs:ChangeMessageVisibility'
+                - 'sqs:GetQueueAttributes'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-Request-${BridgeEnv}'
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueAttributes'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-DLQ-${BridgeEnv}'
+  # ADDF Azure egress: allow the SingleInstance worker to attach the dedicated
+  # Elastic IP (AddfEgressEip) to itself at deploy/launch time. This pins a
+  # stable, replacement-proof source IP so the Azure Blob staging storage
+  # firewall can allowlist exactly one address. ec2:AssociateAddress /
+  # DescribeAddresses do not support resource-level scoping, hence '*'.
+  AWSIAMEipAssociateManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'ec2:AssociateAddress'
+                - 'ec2:DescribeAddresses'
+              Resource:
+                - '*'
   AWSIAMSesManagedPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
@@ -314,6 +442,9 @@ Resources:
         - 'arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier'
         - !Ref AWSIAMDdbManagedPolicy
         - !Ref AWSIAMS3ManagedPolicy
+        - !Ref AWSIAMAddfExportStoreManagedPolicy
+        - !Ref AWSIAMAddfSqsManagedPolicy
+        - !Ref AWSIAMEipAssociateManagedPolicy
         - !Ref AWSIAMSesManagedPolicy
         - !Ref AWSIAMCloudwatchIntegrationManagedPolicy
   AWSIAMInstanceProfile:
@@ -380,6 +511,20 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref AWSLBSecurityGroup
+  # Dedicated Elastic IP for ADDF Azure egress.
+  # The allocation is durable across instance replacement; the app-side
+  # ebextensions hook (eip-associate.config) associates it to the current
+  # SingleInstance host on every deploy/launch. The PublicIp output is the
+  # single value to allowlist on the Azure staging storage-account firewall.
+  AddfEgressEip:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-addf-egress-eip'
+        - Key: purpose
+          Value: addf-azure-egress
   # KMS Keys
   AWSKmsKey:
     Type: "AWS::KMS::Key"
@@ -651,3 +796,13 @@ Outputs:
     Value: !Ref AWSKmsKeyAlias
     Export:
       Name: !Sub '${AWS::StackName}-KmsKeyAlias'
+  AddfEgressEipPublicIp:
+    Description: Stable worker egress IP to allowlist on the Azure ADDF staging storage firewall
+    Value: !Ref AddfEgressEip
+    Export:
+      Name: !Sub '${AWS::StackName}-AddfEgressEipPublicIp'
+  AddfEgressEipAllocationId:
+    Description: Allocation id of the dedicated ADDF-egress Elastic IP
+    Value: !GetAtt AddfEgressEip.AllocationId
+    Export:
+      Name: !Sub '${AWS::StackName}-AddfEgressEipAllocationId'
