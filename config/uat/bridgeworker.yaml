@@ -27,8 +27,8 @@ parameters:
   AddfExportStoreBucket: org-gvbridge-addf-exportstore-uat
   AddfExportRequestSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-Request-uat
   AddfExportDlqSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-DLQ-uat
-  # Blocked on ADDI: replace placeholder with the real Azure staging container URL before enabling publish
-  AddfAzureContainerUrl: PLACEHOLDER_BLOCKED_ON_ADDI
+  # Azure staging container (GV-EU sub, account gvbridgeaddfexportuat, RG rg-research-hub-gv-bridge-addf-export, eastus)
+  AddfAzureContainerUrl: https://gvbridgeaddfexportuat.blob.core.windows.net/addf-export
   AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
   AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
   AddfExportEnabled: 'false'
