@@ -8,7 +8,9 @@ parameters:
   # uat runs on the -staging general worker queue (see config/uat/bridgeworker.yaml WorkerSqsQueueUrl),
   # NOT Bridge-WorkerPlatform-Request-uat. The publish message must ride that exact queue's poller.
   PublishTargetQueueArn: arn:aws:sqs:us-east-1:433864969993:Bridge-WorkerPlatform-Request-staging
-  # 07:00 UTC daily = US night / off-peak. Flip to a near-term rate() through the pipeline to verify
-  # delivery (§5.1), then revert here with a follow-up commit.
-  PublishScheduleExpression: cron(0 7 * * ? *)
+  # §5.1 DELIVERY VERIFICATION (temporary): rate(10 minutes) fires shortly after this stack deploys, so the
+  # scheduler -> Bridge-WorkerPlatform-Request-staging -> AddfPublishWorker dispatch can be observed in the
+  # read-only logs. addf.publish.enabled=false in uat, so each fire is a harmless "publish disabled ... skipping".
+  # REVERT to cron(0 7 * * ? *) (US-night daily) with a follow-up commit once delivery is confirmed.
+  PublishScheduleExpression: rate(10 minutes)
   PublishScheduleState: ENABLED
