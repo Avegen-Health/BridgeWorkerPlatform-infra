@@ -24,6 +24,13 @@ Parameters:
   BridgeWorkerStudy:
     Type: String
     Default: api
+  BridgeServer:
+    Type: String
+    Default: ''
+    Description: >-
+      Full URL (with https://) of the Bridge (BS2) server the worker signs into. Passed straight to the REST
+      client as the base URL; a blank/scheme-less value crashes Spring context init (okhttp "no colon" -> no SQS
+      consumers). Set per-env in config/<env>. Emitted to EB for uat only (see the IsUat-gated option below).
   EC2InstanceType:
     Type: String
     Description: Instance type to use for Elastic Beanstalk Instances
@@ -100,6 +107,9 @@ Parameters:
       live. When on, a missing daily "ADDF publish succeeded" log fires the alarm (dead scheduler / wedged publish).
 Conditions:
   AddfPublishHeartbeatActionsOn: !Equals [!Ref AddfPublishHeartbeatActionsEnabled, 'true']
+  # Emit bridge.server to the EB env for uat only, so dev/prod EB environments are left byte-identical to today
+  # (this rollout is uat-only). Widen when those envs are rolled out and their BridgeServer values are set.
+  IsUat: !Equals [!Ref BridgeEnv, uat]
 Resources:
   AWSEBConfigurationTemplate:
     Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
@@ -182,6 +192,14 @@ Resources:
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: bridge.worker.appId
           Value: !Ref BridgeWorkerStudy
+        # uat-only (IsUat): sets the Bridge (BS2) base URL the worker signs into. Without it the app reads the
+        # .conf placeholder and crashes at startup. Gated so dev/prod EB envs are untouched by this change.
+        - !If
+          - IsUat
+          - Namespace: 'aws:elasticbeanstalk:application:environment'
+            OptionName: bridge.server
+            Value: !Ref BridgeServer
+          - !Ref 'AWS::NoValue'
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: synapse.access.token
           Value: !Ref SynapseAccessToken
