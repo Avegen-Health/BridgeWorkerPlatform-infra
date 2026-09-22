@@ -23,6 +23,31 @@ Parameters:
     Type: Number
     Description: DLQ message retention (max 14 days) so poison messages survive investigation
     Default: 1209600
+  PublishTargetQueueArn:
+    Type: String
+    Description: >-
+      ARN of the EXISTING general worker request queue the daily publish message is sent to
+      (Bridge-WorkerPlatform-Request-{env}; note uat maps to the -staging queue). The AddfPublishWorker
+      is dispatched off this queue's existing poller - no new queue for publish.
+  PublishScheduleExpression:
+    Type: String
+    Description: >-
+      EventBridge Scheduler expression for the daily publish, in UTC (ScheduleExpressionTimezone below).
+      Default fires 07:00 UTC daily = US night / off-peak. To VERIFY delivery (§5.1), temporarily set a
+      near-term expression through the pipeline (e.g. a rate() a few minutes out), watch it fire in the
+      read-only logs, then revert to the US-night cron with a follow-up pipeline change - never a manual SQS send.
+    Default: 'cron(0 7 * * ? *)'
+  PublishScheduleTimezone:
+    Type: String
+    Description: Timezone the schedule expression is evaluated in.
+    Default: UTC
+  PublishScheduleState:
+    Type: String
+    Description: ENABLED to fire the schedule; DISABLED to hold it off (kill-switch alongside addf.publish.enabled).
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+    Default: ENABLED
 Resources:
   # ---- SQS: request queue + dead-letter queue ------------------------------
   AddfExportDlq:
@@ -112,6 +137,51 @@ Resources:
       Period: 300
       Statistic: Maximum
       TreatMissingData: notBreaching
+  # ---- EventBridge Scheduler: daily publish trigger (Phase 5, §5.1) --------
+  # Net-new scheduler - no in-repo scheduler exists (architecture §7). Uses EventBridge Scheduler
+  # (not Events::Rule) so delivery is authorised by a dedicated IAM role rather than mutating the
+  # pre-existing general worker queue's resource policy. Target = the existing worker request queue;
+  # the message rides its existing poller and is dispatched by service name (AddfPublishWorker).
+  AddfPublishSchedulerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'Bridge-ADDF-Publish-Scheduler-${BridgeEnv}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+      Policies:
+        - PolicyName: AddfPublishSendMessage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'sqs:SendMessage'
+                Resource: !Ref PublishTargetQueueArn
+  AddfPublishSchedule:
+    Type: 'AWS::Scheduler::Schedule'
+    Properties:
+      Name: !Sub 'Bridge-ADDF-Publish-${BridgeEnv}'
+      Description: Daily ADDF publish trigger - sends an AddfPublishWorker envelope to the worker request queue.
+      State: !Ref PublishScheduleState
+      ScheduleExpression: !Ref PublishScheduleExpression
+      ScheduleExpressionTimezone: !Ref PublishScheduleTimezone
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !Ref PublishTargetQueueArn
+        RoleArn: !GetAtt AddfPublishSchedulerRole.Arn
+        # Empty body: the worker labels the run with today (UTC) when snapshotDate is absent
+        # (AddfPublishWorkerProcessor §4.3.3). snapshotDate is a publish label, not a row filter,
+        # so the scheduled-time ISO string is deliberately NOT injected (it would corrupt the S3 key).
+        Input: |
+          {"service":"AddfPublishWorker","body":{}}
 Outputs:
   RequestQueueUrl:
     Value: !Ref AddfExportRequestQueue
@@ -141,3 +211,11 @@ Outputs:
     Value: !Ref AddfOpsSnsTopic
     Export:
       Name: !Sub '${AWS::StackName}-OpsSnsTopic'
+  PublishScheduleArn:
+    Value: !GetAtt AddfPublishSchedule.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PublishScheduleArn'
+  PublishSchedulerRoleArn:
+    Value: !GetAtt AddfPublishSchedulerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PublishSchedulerRoleArn'

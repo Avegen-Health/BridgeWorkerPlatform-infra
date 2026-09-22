@@ -5,3 +5,10 @@ parameters:
   OpsNotificationEndpoint: bridge+uat_ops_notif@avegenhealth.com
   VisibilityTimeout: '300'
   MaxReceiveCount: '5'
+  # uat runs on the -staging general worker queue (see config/uat/bridgeworker.yaml WorkerSqsQueueUrl),
+  # NOT Bridge-WorkerPlatform-Request-uat. The publish message must ride that exact queue's poller.
+  PublishTargetQueueArn: arn:aws:sqs:us-east-1:433864969993:Bridge-WorkerPlatform-Request-staging
+  # 07:00 UTC daily = US night / off-peak. Flip to a near-term rate() through the pipeline to verify
+  # delivery (§5.1), then revert here with a follow-up commit.
+  PublishScheduleExpression: cron(0 7 * * ? *)
+  PublishScheduleState: ENABLED
