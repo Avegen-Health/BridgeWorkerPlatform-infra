@@ -6,7 +6,10 @@ parameters:
   BackfillBucket: org-gvbridge-backfill-devstaging
   BridgeEnv: uat
   BridgeUser: heroku
-  BridgeWorkerEmail: akash.shinde@avegenhealth.com
+  # Dedicated least-privilege worker service account (roles=[worker]) in the `api` app; password in SSM
+  # /bridgeworker-uat/BridgeWorkerPassword. Was akash.shinde@avegenhealth.com - that is a real SUPERADMIN
+  # personal account and must NOT be used as a service credential.
+  BridgeWorkerEmail: bridge+worker-uat@avegenhealth.com
   BridgeWorkerStudy: api
   # Bridge (BS2) server the worker signs into. Confirmed live uat endpoint (returns BS2 JSON) and matches the
   # documented worker->BS2 outbound + KMM/ResearcherUI staging URL. Required or Spring context init crashes.
