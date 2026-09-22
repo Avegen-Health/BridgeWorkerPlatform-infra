@@ -88,6 +88,18 @@ Parameters:
     Type: String
     Default: 'false'
     Description: Kill-switch - AzCopy publish to Azure runs only when true
+  AddfPublishHeartbeatActionsEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >-
+      Arm the daily publish-heartbeat alarm (§6.4). Keep 'false' while addf.publish.enabled=false so the alarm
+      does not page on the (expected) absence of publish-success logs; flip to 'true' in Phase 8 when publish goes
+      live. When on, a missing daily "ADDF publish succeeded" log fires the alarm (dead scheduler / wedged publish).
+Conditions:
+  AddfPublishHeartbeatActionsOn: !Equals [!Ref AddfPublishHeartbeatActionsEnabled, 'true']
 Resources:
   AWSEBConfigurationTemplate:
     Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
@@ -773,6 +785,65 @@ Resources:
       Namespace: LogMetrics/Health
       Period: 3600
       Statistic: SampleCount
+      TreatMissingData: breaching
+
+  # ---- ADDF publish heartbeat (Phase 6 §6.4) -------------------------------
+  # Positive-signal liveness for the daily publish. The publish worker logs "ADDF publish succeeded" only on the
+  # confirmed-upload success path (AddfPublishWorkerProcessor, after the _publish/<date>.done marker); a log metric
+  # filter turns that line into a daily datapoint. Modelled on the existing HeartbeatCount health check - a
+  # positive metric with treatMissingData=breaching catches a silently-dead EventBridge scheduler, a wedged
+  # publish, or a crash before the marker, none of which an error-presence alarm can see. Alarm actions stay off
+  # (param) until publish is enabled so the expected pre-rollout absence does not page.
+  AWSCWAddfPublishHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Properties:
+      LogGroupName: !Ref AWSLogsTomcatLogGroup
+      FilterPattern: '"ADDF publish succeeded"'
+      MetricTransformations:
+        - MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - AddfPublishHeartbeatCount
+  TomcatAddfPublishHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Properties:
+      LogGroupName: !Ref TomcatLogGroup
+      FilterPattern: '"ADDF publish succeeded"'
+      MetricTransformations:
+        - MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - AddfPublishHeartbeatCount
+  AWSCWAddfPublishHeartbeatAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-Publish-Heartbeat-${BridgeEnv}'
+      AlarmDescription: >-
+        No successful ADDF publish in the last 24h - the daily publish did not run (dead EventBridge scheduler,
+        wedged publish, or a crash before the done-marker). Stale data would be delivered downstream with no
+        other error. Arm via AddfPublishHeartbeatActionsEnabled once publish is live (Phase 8).
+      ActionsEnabled: !If [AddfPublishHeartbeatActionsOn, true, false]
+      # This alarm lives in the bridgeworker stack (its metric filter needs that stack's Tomcat log groups), so it
+      # routes to that stack's ops topic - same as the sibling RequestError/Warning/HealthCheck alarms - rather
+      # than the addf-export stack's AddfOpsSnsTopic. Avoids a cross-stack Fn::ImportValue Sceptre can't order on.
+      AlarmActions:
+        - !Ref AWSSNSTopic
+      OKActions:
+        - !Ref AWSSNSTopic
+      ComparisonOperator: LessThanThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      MetricName: !Join
+        - '-'
+        - - !Ref 'AWS::StackName'
+          - AddfPublishHeartbeatCount
+      Namespace: LogMetrics/Health
+      Period: 86400
+      Statistic: Sum
       TreatMissingData: breaching
 
 Outputs:
