@@ -2,12 +2,18 @@ template_path: bridgeworker.yaml
 stack_name: bridgeworker-uat
 parameters:
   AwsDefaultVpcId: vpc-06153fdc5047df63c
-  AwsSnsNotificationEndpoint: akash.shinde@avegenhealth.com
+  AwsSnsNotificationEndpoint: bridge+uat_sns_notif@avegenhealth.com
   BackfillBucket: org-gvbridge-backfill-devstaging
   BridgeEnv: uat
   BridgeUser: heroku
-  BridgeWorkerEmail: akash.shinde@avegenhealth.com
+  # Dedicated least-privilege worker service account (roles=[worker]) in the `api` app; password in SSM
+  # /bridgeworker-uat/BridgeWorkerPassword. Was akash.shinde@avegenhealth.com - that is a real SUPERADMIN
+  # personal account and must NOT be used as a service credential.
+  BridgeWorkerEmail: bridge+worker-uat@avegenhealth.com
   BridgeWorkerStudy: api
+  # Bridge (BS2) server the worker signs into. Confirmed live uat endpoint (returns BS2 JSON) and matches the
+  # documented worker->BS2 outbound + KMM/ResearcherUI staging URL. Required or Spring context init crashes.
+  BridgeServer: https://bridge-uat.grip-research.org
   BridgeWorkerPassword: !ssm /bridgeworker-uat/BridgeWorkerPassword
   EC2InstanceType: t3a.medium
   Env: staging
@@ -26,3 +32,13 @@ parameters:
   UserDataBucket: org-gvbridge-userdata-devstaging
   ParticipantRosterBucket: org-gvbridge-participantroster-devstaging
   WorkerSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-WorkerPlatform-Request-staging
+  # ADDF export - queue/bucket created by the bridgeworker-addf-export-uat stack (deploy it first)
+  AddfExportStoreBucket: org-gvbridge-addf-exportstore-uat
+  AddfExportRequestSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-Request-uat
+  AddfExportDlqSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-DLQ-uat
+  # Azure staging container (GV-EU sub, account gvbridgeaddfexportuat, RG rg-research-hub-gv-bridge-addf-export, eastus)
+  AddfAzureContainerUrl: https://gvbridgeaddfexportuat.blob.core.windows.net/addf-export
+  AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
+  AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
+  AddfExportEnabled: 'false'
+  AddfPublishEnabled: 'false'

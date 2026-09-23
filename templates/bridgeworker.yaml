@@ -24,6 +24,13 @@ Parameters:
   BridgeWorkerStudy:
     Type: String
     Default: api
+  BridgeServer:
+    Type: String
+    Default: ''
+    Description: >-
+      Full URL (with https://) of the Bridge (BS2) server the worker signs into. Passed straight to the REST
+      client as the base URL; a blank/scheme-less value crashes Spring context init (okhttp "no colon" -> no SQS
+      consumers). Set per-env in config/<env>. Emitted to EB for uat only (see the IsUat-gated option below).
   EC2InstanceType:
     Type: String
     Description: Instance type to use for Elastic Beanstalk Instances
@@ -70,6 +77,49 @@ Parameters:
     Description: Synapse REST endpoint (prod or dev)
   WorkerSqsQueueUrl:
     Type: String
+  # ---- ADDF Export ---------------------------------------------------------
+  AddfExportStoreBucket:
+    Type: String
+    Description: ADDF export-store bucket name (created by the addf-export stack)
+  AddfExportRequestSqsQueueUrl:
+    Type: String
+    Description: ADDF export request queue URL (created by the addf-export stack)
+  AddfExportDlqSqsQueueUrl:
+    Type: String
+    Description: ADDF export DLQ URL (for redrive/monitoring tooling)
+  AddfAzureContainerUrl:
+    Type: String
+    Description: Azure Blob staging container URL (non-secret, ADDI-provided)
+  AddfBlobSasToken:
+    Type: String
+    NoEcho: true
+    Description: SAS token for the Azure staging container (resolved from SSM at deploy)
+  AddfBlobSasExpiry:
+    Type: String
+    Description: SAS token expiry date (read by the Phase 6 pre-expiry alarm)
+  AddfExportEnabled:
+    Type: String
+    Default: 'false'
+    Description: Kill-switch - accumulate/export worker runs only when true
+  AddfPublishEnabled:
+    Type: String
+    Default: 'false'
+    Description: Kill-switch - AzCopy publish to Azure runs only when true
+  AddfPublishHeartbeatActionsEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >-
+      Arm the daily publish-heartbeat alarm (§6.4). Keep 'false' while addf.publish.enabled=false so the alarm
+      does not page on the (expected) absence of publish-success logs; flip to 'true' in Phase 8 when publish goes
+      live. When on, a missing daily "ADDF publish succeeded" log fires the alarm (dead scheduler / wedged publish).
+Conditions:
+  AddfPublishHeartbeatActionsOn: !Equals [!Ref AddfPublishHeartbeatActionsEnabled, 'true']
+  # Emit bridge.server to the EB env for uat only, so dev/prod EB environments are left byte-identical to today
+  # (this rollout is uat-only). Widen when those envs are rolled out and their BridgeServer values are set.
+  IsUat: !Equals [!Ref BridgeEnv, uat]
 Resources:
   AWSEBConfigurationTemplate:
     Type: 'AWS::ElasticBeanstalk::ConfigurationTemplate'
@@ -164,6 +214,14 @@ Resources:
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: bridge.worker.appId
           Value: !Ref BridgeWorkerStudy
+        # uat-only (IsUat): sets the Bridge (BS2) base URL the worker signs into. Without it the app reads the
+        # .conf placeholder and crashes at startup. Gated so dev/prod EB envs are untouched by this change.
+        - !If
+          - IsUat
+          - Namespace: 'aws:elasticbeanstalk:application:environment'
+            OptionName: bridge.server
+            Value: !Ref BridgeServer
+          - !Ref 'AWS::NoValue'
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: synapse.access.token
           Value: !Ref SynapseAccessToken
@@ -197,6 +255,48 @@ Resources:
             - - !Ref BridgeEnv
               - '.workerPlatform.request.sqs.queue.url'
           Value: !Ref WorkerSqsQueueUrl
+        # ---- ADDF Export env ----
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.export.request.sqs.queue.url'
+          Value: !Ref AddfExportRequestSqsQueueUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.export.dlq.sqs.queue.url'
+          Value: !Ref AddfExportDlqSqsQueueUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.exportstore.bucket'
+          Value: !Ref AddfExportStoreBucket
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: !Join
+            - ''
+            - - !Ref BridgeEnv
+              - '.addf.azure.container.url'
+          Value: !Ref AddfAzureContainerUrl
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.azure.sas.token
+          Value: !Ref AddfBlobSasToken
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.azure.sas.expiry
+          Value: !Ref AddfBlobSasExpiry
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.export.enabled
+          Value: !Ref AddfExportEnabled
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: addf.publish.enabled
+          Value: !Ref AddfPublishEnabled
+        # Allocation id of the dedicated ADDF-egress EIP, consumed by the
+        # app-side ebextensions association hook (eip-associate.config).
+        - Namespace: 'aws:elasticbeanstalk:application:environment'
+          OptionName: ADDF_EGRESS_EIP_ALLOCATION_ID
+          Value: !GetAtt AddfEgressEip.AllocationId
   AWSEBApplication:
     Type: 'AWS::ElasticBeanstalk::Application'
     Properties:
@@ -282,6 +382,64 @@ Resources:
               - !Sub 'arn:aws:s3:::${UploadPrivateKeyBucket}/*'
               - !Sub 'arn:aws:s3:::${UserDataBucket}/*'
               - !Sub 'arn:aws:s3:::${ParticipantRosterBucket}/*'
+  # ADDF export-store bucket: workers read raw, write derived tables, coalesce & clean up staging
+  AWSIAMAddfExportStoreManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 's3:GetObject'
+                - 's3:PutObject'
+                - 's3:DeleteObject'
+              Resource:
+                - !Sub 'arn:aws:s3:::${AddfExportStoreBucket}/*'
+            - Effect: Allow
+              Action:
+                - 's3:ListBucket'
+              Resource:
+                - !Sub 'arn:aws:s3:::${AddfExportStoreBucket}'
+  # ADDF request queue (consume) + DLQ (redrive). Scoped; the worker-tier managed
+  # policy already permits SQS broadly - this documents and narrows intent.
+  AWSIAMAddfSqsManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'sqs:ReceiveMessage'
+                - 'sqs:DeleteMessage'
+                - 'sqs:ChangeMessageVisibility'
+                - 'sqs:GetQueueAttributes'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-Request-${BridgeEnv}'
+            - Effect: Allow
+              Action:
+                - 'sqs:SendMessage'
+                - 'sqs:GetQueueAttributes'
+              Resource:
+                - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-DLQ-${BridgeEnv}'
+  # ADDF Azure egress: allow the SingleInstance worker to attach the dedicated
+  # Elastic IP (AddfEgressEip) to itself at deploy/launch time. This pins a
+  # stable, replacement-proof source IP so the Azure Blob staging storage
+  # firewall can allowlist exactly one address. ec2:AssociateAddress /
+  # DescribeAddresses do not support resource-level scoping, hence '*'.
+  AWSIAMEipAssociateManagedPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - 'ec2:AssociateAddress'
+                - 'ec2:DescribeAddresses'
+              Resource:
+                - '*'
   AWSIAMSesManagedPolicy:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
@@ -349,6 +507,9 @@ Resources:
         - 'arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier'
         - !Ref AWSIAMDdbManagedPolicy
         - !Ref AWSIAMS3ManagedPolicy
+        - !Ref AWSIAMAddfExportStoreManagedPolicy
+        - !Ref AWSIAMAddfSqsManagedPolicy
+        - !Ref AWSIAMEipAssociateManagedPolicy
         - !Ref AWSIAMSesManagedPolicy
         - !Ref AWSIAMCloudwatchIntegrationManagedPolicy
   AWSIAMInstanceProfile:
@@ -415,6 +576,20 @@ Resources:
           FromPort: 80
           ToPort: 80
           SourceSecurityGroupId: !Ref AWSLBSecurityGroup
+  # Dedicated Elastic IP for ADDF Azure egress.
+  # The allocation is durable across instance replacement; the app-side
+  # ebextensions hook (eip-associate.config) associates it to the current
+  # SingleInstance host on every deploy/launch. The PublicIp output is the
+  # single value to allowlist on the Azure staging storage-account firewall.
+  AddfEgressEip:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-addf-egress-eip'
+        - Key: purpose
+          Value: addf-azure-egress
   # KMS Keys
   AWSKmsKey:
     Type: "AWS::KMS::Key"
@@ -682,6 +857,65 @@ Resources:
           ReturnData: true
           Label: MaxDiskUsedPercent
 
+  # ---- ADDF publish heartbeat (Phase 6 §6.4) -------------------------------
+  # Positive-signal liveness for the daily publish. The publish worker logs "ADDF publish succeeded" only on the
+  # confirmed-upload success path (AddfPublishWorkerProcessor, after the _publish/<date>.done marker); a log metric
+  # filter turns that line into a daily datapoint. Modelled on the existing HeartbeatCount health check - a
+  # positive metric with treatMissingData=breaching catches a silently-dead EventBridge scheduler, a wedged
+  # publish, or a crash before the marker, none of which an error-presence alarm can see. Alarm actions stay off
+  # (param) until publish is enabled so the expected pre-rollout absence does not page.
+  AWSCWAddfPublishHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Properties:
+      LogGroupName: !Ref AWSLogsTomcatLogGroup
+      FilterPattern: '"ADDF publish succeeded"'
+      MetricTransformations:
+        - MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - AddfPublishHeartbeatCount
+  TomcatAddfPublishHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Properties:
+      LogGroupName: !Ref TomcatLogGroup
+      FilterPattern: '"ADDF publish succeeded"'
+      MetricTransformations:
+        - MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - AddfPublishHeartbeatCount
+  AWSCWAddfPublishHeartbeatAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-Publish-Heartbeat-${BridgeEnv}'
+      AlarmDescription: >-
+        No successful ADDF publish in the last 24h - the daily publish did not run (dead EventBridge scheduler,
+        wedged publish, or a crash before the done-marker). Stale data would be delivered downstream with no
+        other error. Arm via AddfPublishHeartbeatActionsEnabled once publish is live (Phase 8).
+      ActionsEnabled: !If [AddfPublishHeartbeatActionsOn, true, false]
+      # This alarm lives in the bridgeworker stack (its metric filter needs that stack's Tomcat log groups), so it
+      # routes to that stack's ops topic - same as the sibling RequestError/Warning/HealthCheck alarms - rather
+      # than the addf-export stack's AddfOpsSnsTopic. Avoids a cross-stack Fn::ImportValue Sceptre can't order on.
+      AlarmActions:
+        - !Ref AWSSNSTopic
+      OKActions:
+        - !Ref AWSSNSTopic
+      ComparisonOperator: LessThanThreshold
+      Threshold: 1
+      EvaluationPeriods: 1
+      MetricName: !Join
+        - '-'
+        - - !Ref 'AWS::StackName'
+          - AddfPublishHeartbeatCount
+      Namespace: LogMetrics/Health
+      Period: 86400
+      Statistic: Sum
+      TreatMissingData: breaching
+
 Outputs:
   AWSSNSTopic:
     Value: !Ref AWSSNSTopic
@@ -703,3 +937,13 @@ Outputs:
     Value: !Ref AWSKmsKeyAlias
     Export:
       Name: !Sub '${AWS::StackName}-KmsKeyAlias'
+  AddfEgressEipPublicIp:
+    Description: Stable worker egress IP to allowlist on the Azure ADDF staging storage firewall
+    Value: !Ref AddfEgressEip
+    Export:
+      Name: !Sub '${AWS::StackName}-AddfEgressEipPublicIp'
+  AddfEgressEipAllocationId:
+    Description: Allocation id of the dedicated ADDF-egress Elastic IP
+    Value: !GetAtt AddfEgressEip.AllocationId
+    Export:
+      Name: !Sub '${AWS::StackName}-AddfEgressEipAllocationId'

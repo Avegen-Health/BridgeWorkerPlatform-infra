@@ -1,0 +1,410 @@
+Description: ADDF Export foundation - SQS request queue + DLQ, S3 export store, ops alerting
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  BridgeEnv:
+    Type: String
+    Description: Bridge environment token used in resource names (e.g. dev, uat, prod)
+  OpsNotificationEndpoint:
+    Type: String
+    Description: Email address subscribed to the ADDF ops SNS topic (DLQ alarm)
+  VisibilityTimeout:
+    Type: Number
+    Description: Request-queue visibility timeout in seconds; must exceed worst-case per-record processing
+    Default: 300
+  MaxReceiveCount:
+    Type: Number
+    Description: Deliveries attempted before a message is moved to the DLQ
+    Default: 5
+  RequestQueueRetentionSeconds:
+    Type: Number
+    Description: Request-queue message retention (default 4 days)
+    Default: 345600
+  DlqRetentionSeconds:
+    Type: Number
+    Description: DLQ message retention (max 14 days) so poison messages survive investigation
+    Default: 1209600
+  PublishTargetQueueArn:
+    Type: String
+    Description: >-
+      ARN of the EXISTING general worker request queue the daily publish message is sent to
+      (Bridge-WorkerPlatform-Request-{env}; note uat maps to the -staging queue). The AddfPublishWorker
+      is dispatched off this queue's existing poller - no new queue for publish.
+  PublishScheduleExpression:
+    Type: String
+    Description: >-
+      EventBridge Scheduler expression for the daily publish, in UTC (ScheduleExpressionTimezone below).
+      Default fires 07:00 UTC daily = US night / off-peak. To VERIFY delivery (§5.1), temporarily set a
+      near-term expression through the pipeline (e.g. a rate() a few minutes out), watch it fire in the
+      read-only logs, then revert to the US-night cron with a follow-up pipeline change - never a manual SQS send.
+    Default: 'cron(0 7 * * ? *)'
+  PublishScheduleTimezone:
+    Type: String
+    Description: Timezone the schedule expression is evaluated in.
+    Default: UTC
+  PublishScheduleState:
+    Type: String
+    Description: ENABLED to fire the schedule; DISABLED to hold it off (kill-switch alongside addf.publish.enabled).
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+    Default: ENABLED
+  # ---- Phase 6 alerting knobs ----------------------------------------------
+  RequestQueueAgeAlarmThresholdSeconds:
+    Type: Number
+    Description: >-
+      Age (seconds) of the oldest message on the ADDF request queue that trips the backlog alarm (§6.4).
+      Start at a few x VisibilityTimeout (default 6 x 300s = 1800s); accumulate wedged / poller down / pool
+      backpressure makes the oldest message age climb past this.
+    Default: 1800
+  SasExpiryAlarmThresholdDays:
+    Type: Number
+    Description: >-
+      Fire the SAS-expiry alarm when the Azure staging SAS has fewer than this many days left (§6.3). SAS max
+      ~1yr and bureaucratic to renew, so 30 days gives comfortable lead time to rotate before the pipeline dies.
+    Default: 30
+Resources:
+  # ---- SQS: request queue + dead-letter queue ------------------------------
+  AddfExportDlq:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub 'Bridge-ADDF-Export-DLQ-${BridgeEnv}'
+      MessageRetentionPeriod: !Ref DlqRetentionSeconds
+      SqsManagedSseEnabled: true
+      RedriveAllowPolicy: !Sub |
+        {
+          "redrivePermission": "byQueue",
+          "sourceQueueArns": ["arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:Bridge-ADDF-Export-Request-${BridgeEnv}"]
+        }
+  AddfExportRequestQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Sub 'Bridge-ADDF-Export-Request-${BridgeEnv}'
+      VisibilityTimeout: !Ref VisibilityTimeout
+      MessageRetentionPeriod: !Ref RequestQueueRetentionSeconds
+      SqsManagedSseEnabled: true
+      RedrivePolicy: !Sub
+        - '{"deadLetterTargetArn":"${DlqArn}","maxReceiveCount":${MaxReceiveCount}}'
+        - DlqArn: !GetAtt AddfExportDlq.Arn
+  # ---- S3: export store (cleanup-exempt) -----------------------------------
+  AddfExportStoreBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub 'org-gvbridge-addf-exportstore-${BridgeEnv}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: project
+          Value: ADDF
+        - Key: data-classification
+          Value: phi
+        - Key: cleanup-exempt
+          Value: 'true'
+  AddfExportStoreBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref AddfExportStoreBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt AddfExportStoreBucket.Arn
+              - !Sub '${AddfExportStoreBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+  # ---- Ops alerting: SNS topic + DLQ alarm ---------------------------------
+  AddfOpsSnsTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+        - Endpoint: !Ref OpsNotificationEndpoint
+          Protocol: email
+  AddfDlqNotEmptyAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-Export-DLQ-${BridgeEnv}-NotEmpty'
+      AlarmDescription: A message landed in the ADDF export DLQ - a poison record failed processing.
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AddfOpsSnsTopic
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AddfExportDlq.QueueName
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Maximum
+      TreatMissingData: notBreaching
+  # Phase 6 §6.4 - request-queue age: accumulate wedged / poller down / pool backpressure (CallerRunsPolicy)
+  # makes the oldest message age climb silently while export lag grows. Distinct from the DLQ alarm (poison
+  # messages) - this catches a live-but-stuck consumer.
+  AddfRequestQueueAgeAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-Export-Request-${BridgeEnv}-OldestMessageAge'
+      AlarmDescription: >-
+        The oldest ADDF export request message is older than the threshold - the accumulate/dimension worker is
+        wedged or the poller is down and export lag is climbing.
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AddfOpsSnsTopic
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AddfExportRequestQueue.QueueName
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: !Ref RequestQueueAgeAlarmThresholdSeconds
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Maximum
+      TreatMissingData: notBreaching
+  # ---- EventBridge Scheduler: daily publish trigger (Phase 5, §5.1) --------
+  # Net-new scheduler - no in-repo scheduler exists (architecture §7). Uses EventBridge Scheduler
+  # (not Events::Rule) so delivery is authorised by a dedicated IAM role rather than mutating the
+  # pre-existing general worker queue's resource policy. Target = the existing worker request queue;
+  # the message rides its existing poller and is dispatched by service name (AddfPublishWorker).
+  AddfPublishSchedulerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'Bridge-ADDF-Publish-Scheduler-${BridgeEnv}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+      Policies:
+        - PolicyName: AddfPublishSendMessage
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'sqs:SendMessage'
+                Resource: !Ref PublishTargetQueueArn
+  AddfPublishSchedule:
+    Type: 'AWS::Scheduler::Schedule'
+    Properties:
+      Name: !Sub 'Bridge-ADDF-Publish-${BridgeEnv}'
+      Description: Daily ADDF publish trigger - sends an AddfPublishWorker envelope to the worker request queue.
+      State: !Ref PublishScheduleState
+      ScheduleExpression: !Ref PublishScheduleExpression
+      ScheduleExpressionTimezone: !Ref PublishScheduleTimezone
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !Ref PublishTargetQueueArn
+        RoleArn: !GetAtt AddfPublishSchedulerRole.Arn
+        # Empty body: the worker labels the run with today (UTC) when snapshotDate is absent
+        # (AddfPublishWorkerProcessor §4.3.3). snapshotDate is a publish label, not a row filter,
+        # so the scheduled-time ISO string is deliberately NOT injected (it would corrupt the S3 key).
+        Input: |
+          {"service":"AddfPublishWorker","body":{}}
+  # ---- Phase 6 §6.3: SAS-expiry alarm --------------------------------------
+  # A SAS token silently expiring kills the publish upload with no error anywhere upstream (the downstream
+  # Last-Modified copy fails open - stale data delivered, no alarm). SAS has no CloudWatch metric of its own, so
+  # a tiny daily Lambda reads the expiry date seeded alongside the token in SSM (/bridgeworker-<env>/AddfBlobSasExpiry,
+  # same gated CI job as §1.3/§6.2 - never a laptop CLI) and emits days-until-expiry; the alarm pages ~30 days out.
+  AddfSasExpiryCheckerRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub 'Bridge-ADDF-SAS-Expiry-Checker-${BridgeEnv}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: ReadSasExpiryAndEmitMetric
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'ssm:GetParameter'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/bridgeworker-${BridgeEnv}/AddfBlobSasExpiry'
+              - Effect: Allow
+                Action: 'kms:Decrypt'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'
+              - Effect: Allow
+                Action: 'cloudwatch:PutMetricData'
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'cloudwatch:namespace': ADDF/Export
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/Bridge-ADDF-SAS-Expiry-Checker-${BridgeEnv}:*'
+  AddfSasExpiryCheckerLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/Bridge-ADDF-SAS-Expiry-Checker-${BridgeEnv}'
+      RetentionInDays: 90
+  AddfSasExpiryCheckerFunction:
+    Type: 'AWS::Lambda::Function'
+    DependsOn: AddfSasExpiryCheckerLogGroup
+    Properties:
+      FunctionName: !Sub 'Bridge-ADDF-SAS-Expiry-Checker-${BridgeEnv}'
+      Description: Daily - emits ADDF/Export AddfSasDaysUntilExpiry from the SAS expiry date in SSM (Phase 6 §6.3).
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt AddfSasExpiryCheckerRole.Arn
+      Environment:
+        Variables:
+          BRIDGE_ENV: !Ref BridgeEnv
+          SAS_EXPIRY_PARAM: !Sub '/bridgeworker-${BridgeEnv}/AddfBlobSasExpiry'
+          METRIC_NAMESPACE: ADDF/Export
+          METRIC_NAME: AddfSasDaysUntilExpiry
+      Code:
+        ZipFile: |
+          import os
+          from datetime import datetime, timezone
+          import boto3
+
+          ssm = boto3.client("ssm")
+          cw = boto3.client("cloudwatch")
+
+          def _parse(value):
+              v = value.strip()
+              # Accept a bare date (YYYY-MM-DD) or an ISO-8601 timestamp, with or without a trailing Z.
+              if v.endswith("Z"):
+                  v = v[:-1] + "+00:00"
+              try:
+                  dt = datetime.fromisoformat(v)
+              except ValueError:
+                  dt = datetime.strptime(v[:10], "%Y-%m-%d")
+              if dt.tzinfo is None:
+                  dt = dt.replace(tzinfo=timezone.utc)
+              return dt
+
+          def handler(event, context):
+              param = os.environ["SAS_EXPIRY_PARAM"]
+              expiry = _parse(ssm.get_parameter(Name=param, WithDecryption=True)["Parameter"]["Value"])
+              days = (expiry - datetime.now(timezone.utc)).total_seconds() / 86400.0
+              cw.put_metric_data(
+                  Namespace=os.environ["METRIC_NAMESPACE"],
+                  MetricData=[{
+                      "MetricName": os.environ["METRIC_NAME"],
+                      "Dimensions": [{"Name": "Env", "Value": os.environ["BRIDGE_ENV"]}],
+                      "Value": round(days, 2),
+                      "Unit": "Count",
+                  }],
+              )
+              print(f"ADDF SAS days until expiry: {days:.2f} (param={param})")
+              return {"daysUntilExpiry": days}
+  AddfSasExpiryCheckerSchedule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub 'Bridge-ADDF-SAS-Expiry-Checker-${BridgeEnv}'
+      Description: Runs the ADDF SAS-expiry checker once daily.
+      ScheduleExpression: 'rate(1 day)'
+      State: ENABLED
+      Targets:
+        - Id: AddfSasExpiryChecker
+          Arn: !GetAtt AddfSasExpiryCheckerFunction.Arn
+  AddfSasExpiryCheckerPermission:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      FunctionName: !Ref AddfSasExpiryCheckerFunction
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AddfSasExpiryCheckerSchedule.Arn
+  AddfSasExpiryAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: !Sub 'Bridge-ADDF-SAS-Expiry-${BridgeEnv}'
+      AlarmDescription: >-
+        The Azure staging SAS token is within the pre-expiry window (or the daily checker stopped reporting /
+        the expiry param is unset - both breaching). Rotate the SAS via the gated CI job (§6.2) before it lapses.
+      ActionsEnabled: true
+      AlarmActions:
+        - !Ref AddfOpsSnsTopic
+      OKActions:
+        - !Ref AddfOpsSnsTopic
+      Namespace: ADDF/Export
+      MetricName: AddfSasDaysUntilExpiry
+      Dimensions:
+        - Name: Env
+          Value: !Ref BridgeEnv
+      ComparisonOperator: LessThanThreshold
+      Threshold: !Ref SasExpiryAlarmThresholdDays
+      EvaluationPeriods: 1
+      Period: 86400
+      Statistic: Minimum
+      TreatMissingData: breaching
+Outputs:
+  RequestQueueUrl:
+    Value: !Ref AddfExportRequestQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-RequestQueueUrl'
+  RequestQueueArn:
+    Value: !GetAtt AddfExportRequestQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-RequestQueueArn'
+  DlqUrl:
+    Value: !Ref AddfExportDlq
+    Export:
+      Name: !Sub '${AWS::StackName}-DlqUrl'
+  DlqArn:
+    Value: !GetAtt AddfExportDlq.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-DlqArn'
+  ExportStoreBucket:
+    Value: !Ref AddfExportStoreBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ExportStoreBucket'
+  ExportStoreBucketArn:
+    Value: !GetAtt AddfExportStoreBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-ExportStoreBucketArn'
+  OpsSnsTopic:
+    Value: !Ref AddfOpsSnsTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-OpsSnsTopic'
+  SasExpiryCheckerFunction:
+    Value: !Ref AddfSasExpiryCheckerFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-SasExpiryCheckerFunction'
+  SasExpiryAlarmName:
+    Value: !Ref AddfSasExpiryAlarm
+    Export:
+      Name: !Sub '${AWS::StackName}-SasExpiryAlarmName'
+  RequestQueueAgeAlarmName:
+    Value: !Ref AddfRequestQueueAgeAlarm
+    Export:
+      Name: !Sub '${AWS::StackName}-RequestQueueAgeAlarmName'
+  PublishScheduleArn:
+    Value: !GetAtt AddfPublishSchedule.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PublishScheduleArn'
+  PublishSchedulerRoleArn:
+    Value: !GetAtt AddfPublishSchedulerRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-PublishSchedulerRoleArn'
