@@ -8,8 +8,13 @@ parameters:
   # uat runs on the -staging general worker queue (see config/uat/bridgeworker.yaml WorkerSqsQueueUrl),
   # NOT Bridge-WorkerPlatform-Request-uat. The publish message must ride that exact queue's poller.
   PublishTargetQueueArn: arn:aws:sqs:us-east-1:433864969993:Bridge-WorkerPlatform-Request-staging
-  # 07:00 UTC daily = US night / off-peak. §5.1 delivery verified 2026-09-22 (scheduler -> queue -> AddfPublishWorker
-  # dispatch confirmed via the "ADDF publish disabled ... skipping" worker logs) using a temporary rate(5 minutes);
-  # now reverted to the daily cron.
-  PublishScheduleExpression: rate(10 minutes)
+  # 07:00 UTC daily = US night / off-peak.
+  #
+  # Verified twice with a temporary near-term schedule, each reverted afterwards:
+  #  - 2026-09-22, rate(5 minutes): scheduler -> queue -> AddfPublishWorker dispatch (publish still disabled,
+  #    confirmed by the "ADDF publish disabled ... skipping" worker logs).
+  #  - 2026-09-23, rate(10 minutes): first real end-to-end publish. Snapshot built, blobs uploaded to the uat
+  #    Azure container, and biaffect-3/_publish/2026-09-23.done written - a marker that is only created after the
+  #    upload confirms. Later ticks correctly short-circuited on isPublished() in 0s.
+  PublishScheduleExpression: cron(0 7 * * ? *)
   PublishScheduleState: ENABLED
