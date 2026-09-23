@@ -65,9 +65,6 @@ Parameters:
     Type: String
   ParticipantRosterBucket:
     Type: String
-  BridgeServer:
-    Type: String
-    Description: URL of the Bridge server (e.g. https://bridge-uat.grip-research.org)
   S3NotificationSqsQueueUrl:
     Type: String
     Description: SQS queue URL for S3 upload-complete notifications
