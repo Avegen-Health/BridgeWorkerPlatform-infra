@@ -279,11 +279,15 @@ Resources:
             - - !Ref BridgeEnv
               - '.addf.exportstore.bucket'
           Value: !Ref AddfExportStoreBucket
+        # Unprefixed on purpose. SasBlobCredentialProvider reads the bare key
+        # "addf.azure.container.url", and BridgeWorkerPlatform.conf carries only an
+        # unprefixed placeholder for it (there is no <env>.addf.azure.container.url entry,
+        # unlike the exportstore/queue keys above). An env-prefixed EB option therefore
+        # never satisfies the lookup: the provider falls through to the placeholder and
+        # publish dies in buildContainerClient with "ADDF Azure container URL not
+        # configured". Matches addf.azure.sas.token / .expiry below, which are also bare.
         - Namespace: 'aws:elasticbeanstalk:application:environment'
-          OptionName: !Join
-            - ''
-            - - !Ref BridgeEnv
-              - '.addf.azure.container.url'
+          OptionName: addf.azure.container.url
           Value: !Ref AddfAzureContainerUrl
         - Namespace: 'aws:elasticbeanstalk:application:environment'
           OptionName: addf.azure.sas.token
