@@ -316,23 +316,17 @@ Resources:
             DeleteSourceFromS3: true
             Enabled: true
             MaxAgeInDays: 90
-  # TEMPORARY (remove/re-add step 1 of 2): the bridgeworker-uat EB environment was
-  # terminated after it got stuck in CREATE_FAILED (AWS retired Launch Configurations).
-  # CloudFormation cannot update a terminated env, so we first drop the resource from
-  # stack state (this deploy), then re-add it (next deploy) to create a fresh env on the
-  # launch template with the SAME name. KMS/S3/IAM and the allowlisted ADDF egress EIP
-  # are separate resources and are untouched by this. Restore this block in deploy 2.
-  # AWSEBEnvironment:
-  #   Type: 'AWS::ElasticBeanstalk::Environment'
-  #   Properties:
-  #     ApplicationName: !Ref AWSEBApplication
-  #     TemplateName: !Ref AWSEBConfigurationTemplate
-  #     EnvironmentName: !Join
-  #       - '-'
-  #       - - !Ref 'AWS::StackName'
-  #     Tier:
-  #       Name: Worker
-  #       Type: SQS/HTTP
+  AWSEBEnvironment:
+    Type: 'AWS::ElasticBeanstalk::Environment'
+    Properties:
+      ApplicationName: !Ref AWSEBApplication
+      TemplateName: !Ref AWSEBConfigurationTemplate
+      EnvironmentName: !Join
+        - '-'
+        - - !Ref 'AWS::StackName'
+      Tier:
+        Name: Worker
+        Type: SQS/HTTP
   AWSS3AppDeployBucket:
     Type: 'AWS::S3::Bucket'
     Properties:
