@@ -135,6 +135,14 @@ Resources:
         - Namespace: 'aws:autoscaling:launchconfiguration'
           OptionName: InstanceType
           Value: !Ref EC2InstanceType
+        # DisableIMDSv1=true requires IMDSv2, which forces EB to provision a Launch Template
+        # instead of a Launch Configuration. AWS retired Launch Configurations account-wide
+        # ("The Launch Configuration creation operation is not available in your account"), so
+        # env create/rebuild fails without this. The launchconfiguration options above carry over
+        # to the launch template unchanged; this also hardens the instance metadata service.
+        - Namespace: 'aws:autoscaling:launchconfiguration'
+          OptionName: DisableIMDSv1
+          Value: 'true'
         - Namespace: 'aws:ec2:vpc'
           OptionName: VPCId
           Value: !ImportValue us-east-1-bridge-vpc-with-subnets-VPC
