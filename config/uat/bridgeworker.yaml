@@ -41,4 +41,4 @@ parameters:
   AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
   AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
   AddfExportEnabled: 'false'
-  AddfPublishEnabled: 'false'
+  AddfPublishEnabled: 'true'

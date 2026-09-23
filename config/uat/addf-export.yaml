@@ -11,5 +11,5 @@ parameters:
   # 07:00 UTC daily = US night / off-peak. §5.1 delivery verified 2026-09-22 (scheduler -> queue -> AddfPublishWorker
   # dispatch confirmed via the "ADDF publish disabled ... skipping" worker logs) using a temporary rate(5 minutes);
   # now reverted to the daily cron.
-  PublishScheduleExpression: cron(0 7 * * ? *)
+  PublishScheduleExpression: rate(10 minutes)
   PublishScheduleState: ENABLED
