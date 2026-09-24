@@ -18,6 +18,34 @@
 # obviously covered, and a dry run answers that in a build instead of half-way
 # through a real backfill.
 #
+# All recognised variables:
+#   ADDF_BACKFILL=uat        trigger the whole-app participant-version backfill
+#   ADDF_REPUBLISH=uat       delete today's publish marker to force a re-publish
+#   ADDF_DRY_RUN=true        preflight only; perform nothing
+#   ADDF_FORCE=true          proceed despite a VisibilityTimeout below the floor
+#   ADDF_SNAPSHOT_DATE=YYYY-MM-DD   republish a day other than today (UTC)
+# Setting both trigger variables in one build is refused -- republish must run only
+# after the backfill has finished, and the worker enumerates asynchronously.
+#
+# NOT gated by AddfExportEnabled. That flag is read only by the BS2 enqueuer; no BWP
+# worker consults it (verified: no addf.export.enabled lookup in the accumulate,
+# dimension or backfill processors). So uat's AddfExportEnabled: 'false' in
+# config/uat/bridgeworker.yaml does NOT make this job a no-op.
+#
+# IF A RUN MISBEHAVES: an SQS message cannot be un-sent. The backfill only ever
+# enqueues AddfParticipantVersionWorker messages, and that worker presence-skips any
+# (healthCode, version) it has already written, so a stray or duplicate run wastes
+# Bridge API calls but cannot corrupt data. To stop one in flight, purge the ADDF
+# request queue or scale the worker down; to confirm what ran, read the WorkerLog DDB
+# table (workerId=AddfParticipantVersionBackfillWorker) -- runs record status=complete
+# or status=FAILED with the account count reached.
+#
+# KNOWN LIMITATION -- no re-entrancy guard. Two concurrent triggers (including
+# Travis's "restart build", which replays the original env vars) each send their own
+# kickoff and run two overlapping enumerations. They share the worker's 10rps limiter,
+# so both run slower and are likelier to outlive the visibility window. Data stays
+# correct via the presence-skip above. Check for a running backfill before triggering.
+#
 # WHY THE BACKFILL MATTERS
 #   Taking an assessment emits no participant-version event, so a pre-existing
 #   participant's NEW uploads carry a participant_version that ADDF has never seen.
@@ -31,6 +59,11 @@
 #   rather than tomorrow -- deleting the marker lets the next tick rebuild.
 
 set -euo pipefail
+
+# Floor for the target queue's VisibilityTimeout. At the worker's 10 participants/sec
+# this covers ~9000 participants; below it, a whole-app walk risks outliving the
+# window. Overridable with ADDF_FORCE=true when the population is known to be small.
+MIN_VISIBILITY_SECONDS=900
 
 # ---------------------------------------------------------------- env profiles
 env_profile() {
@@ -153,10 +186,18 @@ do_backfill() {
           --attribute-names VisibilityTimeout \
           --query 'Attributes.VisibilityTimeout' --output text 2>/dev/null || echo "unknown")"
   echo "  queue VisibilityTimeout: ${vis}s"
-  if [ "$vis" != "unknown" ] && [ "$vis" -lt 900 ] 2>/dev/null; then
-    echo "  WARNING: at ~10 participants/sec this window covers only ~$((vis * 10)) participants."
-    echo "           If the app is larger than that, raise VisibilityTimeout on"
-    echo "           $TARGET_QUEUE before running, or the job will redrive."
+  if [ "$vis" != "unknown" ] && [ "$vis" -lt "$MIN_VISIBILITY_SECONDS" ] 2>/dev/null; then
+    echo "  At ~10 participants/sec this window covers only ~$((vis * 10)) participants." >&2
+    if [ "${ADDF_FORCE:-false}" != "true" ]; then
+      echo "ERROR: VisibilityTimeout ${vis}s is below ${MIN_VISIBILITY_SECONDS}s -- refusing to send." >&2
+      echo "  If the enumeration outlives the window, SQS redelivers it and a SECOND" >&2
+      echo "  concurrent walk starts; after maxReceiveCount it lands in this queue's DLQ," >&2
+      echo "  which -- unlike the dedicated ADDF queue -- has no alarm wired in this repo." >&2
+      echo "  Either raise VisibilityTimeout on $TARGET_QUEUE, or, if the app is small" >&2
+      echo "  enough to finish comfortably inside ${vis}s, re-run with ADDF_FORCE=true." >&2
+      exit 1
+    fi
+    echo "  ADDF_FORCE=true -- proceeding despite the short window."
   fi
 
   if [ "${ADDF_DRY_RUN:-false}" = "true" ]; then
@@ -186,6 +227,18 @@ do_republish() {
   echo "  bucket   : $EXPORT_STORE"
   echo "  marker   : $marker"
 
+  # Assert the bucket first. head-object returns 404 both for "marker not published
+  # yet" and for "this bucket does not exist", so without this check a stale
+  # EXPORT_STORE value would print "nothing to delete" and exit 0 -- a republish that
+  # silently never happened, with no failing build to notice it.
+  if ! aws s3api head-bucket --region "$AWS_REGION_" --bucket "$EXPORT_STORE" >/dev/null 2>&1; then
+    echo "ERROR: export-store bucket '$EXPORT_STORE' is not reachable." >&2
+    echo "  Either the name drifted from config/${TARGET_ENV}/bridgeworker.yaml or the" >&2
+    echo "  runner cannot see it. Refusing to report 'nothing to delete' for a bucket" >&2
+    echo "  that may not exist." >&2
+    exit 1
+  fi
+
   if ! aws s3api head-object --region "$AWS_REGION_" \
         --bucket "$EXPORT_STORE" --key "$marker" >/dev/null 2>&1; then
     echo "  marker absent -- nothing to delete; the next tick will publish anyway."
@@ -204,6 +257,15 @@ do_republish() {
 }
 
 # ---------------------------------------------------------------- dispatch
+if [ -n "${ADDF_BACKFILL:-}" ] && [ -n "${ADDF_REPUBLISH:-}" ]; then
+  echo "ERROR: both ADDF_BACKFILL and ADDF_REPUBLISH are set." >&2
+  echo "  These are two separate builds, deliberately. Republish must run only AFTER" >&2
+  echo "  the backfill has finished -- the worker enumerates asynchronously, so a" >&2
+  echo "  republish fired in the same build would snapshot a half-filled dimension" >&2
+  echo "  table. Trigger the backfill, wait for status=complete, then republish." >&2
+  exit 1
+fi
+
 if [ -n "${ADDF_BACKFILL:-}" ]; then
   TARGET_ENV="$ADDF_BACKFILL"
   ACTION="backfill"

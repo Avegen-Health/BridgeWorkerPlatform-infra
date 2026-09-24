@@ -25,16 +25,31 @@ stages:
 - name: validate
 - name: deploy
   if: type = push
-# Gated operator actions (ADDF implementation-plan §3b.4). Never runs on a push:
-# it requires an env var that only an API-triggered build supplies, so it cannot
-# fire by accident. Trigger with ADDF_BACKFILL=uat (participant-version backfill)
-# or ADDF_REPUBLISH=uat (force today's re-publish). See scripts/addf-ops.sh.
+# Gated operator actions (ADDF implementation-plan §3b.4). Trigger with an
+# API-triggered build carrying ADDF_BACKFILL=uat (participant-version backfill) or
+# ADDF_REPUBLISH=uat (force today's re-publish). See scripts/addf-ops.sh.
+#
+# `type = api` is load-bearing, not belt-and-braces. An env(X) IS present test only
+# asks whether the variable exists -- it cannot tell a one-off value supplied by an
+# API request from a persistent Repository Settings variable of the same name. With
+# presence alone, anyone leaving an ADDF_BACKFILL setting behind would arm this stage
+# on every ordinary push to develop/uat/prod.
+#
+# The parentheses are load-bearing too: Travis binds AND tighter than OR, so without
+# them this would read (type = api AND BACKFILL) OR (REPUBLISH) -- protecting the
+# backfill branch and leaving republish triggerable from any build.
 - name: addf-ops
-  if: env(ADDF_BACKFILL) IS present OR env(ADDF_REPUBLISH) IS present
+  if: type = api AND (env(ADDF_BACKFILL) IS present OR env(ADDF_REPUBLISH) IS present)
 jobs:
   include:
   - stage: validate
-    script: cfn-lint ./templates/**/* --ignore-checks W2001
+    script:
+    - cfn-lint ./templates/**/* --ignore-checks W2001
+    # Templates were linted; the ops scripts were not. They are dormant behind the
+    # addf-ops gate, so without this a syntax or quoting bug is first discovered at
+    # the moment the script is touching the worker queue and export bucket.
+    - bash -n scripts/*.sh
+    - shellcheck scripts/*.sh || echo "shellcheck unavailable or reported issues (non-blocking)"
   - stage: deploy
     script: sceptre launch $TRAVIS_BRANCH --yes
   - stage: addf-ops
