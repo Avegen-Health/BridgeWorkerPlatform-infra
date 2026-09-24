@@ -12,6 +12,12 @@
 #   travis restart / API build with   ADDF_BACKFILL=uat    -> kick off the backfill
 #   travis restart / API build with   ADDF_REPUBLISH=uat   -> force today's re-publish
 #
+# Add ADDF_DRY_RUN=true to either to preflight permissions and print the intended
+# action WITHOUT sending or deleting anything. Do this first: the deploy credentials
+# exist for CloudFormation/sceptre, so sqs:SendMessage and s3:DeleteObject are not
+# obviously covered, and a dry run answers that in a build instead of half-way
+# through a real backfill.
+#
 # WHY THE BACKFILL MATTERS
 #   Taking an assessment emits no participant-version event, so a pre-existing
 #   participant's NEW uploads carry a participant_version that ADDF has never seen.
@@ -52,7 +58,7 @@ env_profile() {
 
 require_aws() {
   command -v aws >/dev/null 2>&1 || { echo "ERROR: aws CLI not on PATH" >&2; exit 1; }
-  aws sts get-caller-identity --region "$AWS_REGION_" >/dev/null \
+  CALLER_ARN="$(aws sts get-caller-identity --region "$AWS_REGION_" --query Arn --output text 2>/dev/null)" \
     || { echo "ERROR: no usable AWS credentials in the runner" >&2; exit 1; }
   local actual
   actual="$(aws sts get-caller-identity --region "$AWS_REGION_" --query Account --output text)"
@@ -61,6 +67,67 @@ require_aws() {
     echo "  Refusing to act across accounts." >&2
     exit 1
   fi
+  echo "Runner identity: $CALLER_ARN (account $actual)"
+}
+
+# IAM's simulator answers "would this principal be allowed?" without performing the
+# call. The deploy credentials exist for CloudFormation/sceptre, so the two writes
+# this job needs -- sqs:SendMessage and s3:DeleteObject -- are not obviously covered.
+# Checking here turns a failed production run into a preflight line.
+#
+# policy-source-arn wants the user/role ARN, not an assumed-role session ARN, so
+# collapse sts::...:assumed-role/Role/session -> iam::...:role/Role.
+policy_source_arn() {
+  case "$CALLER_ARN" in
+    arn:aws:sts::*:assumed-role/*)
+      local acct role
+      acct="$(printf '%s' "$CALLER_ARN" | cut -d: -f5)"
+      role="$(printf '%s' "$CALLER_ARN" | cut -d/ -f2)"
+      printf 'arn:aws:iam::%s:role/%s' "$acct" "$role"
+      ;;
+    *) printf '%s' "$CALLER_ARN" ;;
+  esac
+}
+
+# simulate one action; prints the decision, returns non-zero if not allowed
+simulate() {
+  local action="$1" resource="$2" decision
+  decision="$(aws iam simulate-principal-policy \
+      --policy-source-arn "$(policy_source_arn)" \
+      --action-names "$action" \
+      --resource-arns "$resource" \
+      --query 'EvaluationResults[0].EvalDecision' --output text 2>/dev/null)" || {
+    echo "  ?  $action on $resource -- could not simulate (principal lacks iam:SimulatePrincipalPolicy)"
+    return 0   # inconclusive is not a failure; see the note printed by preflight
+  }
+  if [ "$decision" = "allowed" ]; then
+    echo "  OK $action on $resource"
+  else
+    echo "  !! $action on $resource -> $decision"
+    return 1
+  fi
+}
+
+# Preflight the writes this job performs. Runs on every invocation: it is read-only
+# and cheap, and a denial found here costs a build instead of a half-done backfill.
+preflight() {
+  local queue_arn="arn:aws:sqs:${AWS_REGION_}:${ACCOUNT}:${TARGET_QUEUE}"
+  local marker_arn="arn:aws:s3:::${EXPORT_STORE}/biaffect-3/_publish/*"
+  local rc=0
+
+  echo "Preflight (IAM simulation -- nothing is sent or deleted):"
+  case "$ACTION" in
+    backfill)  simulate "sqs:SendMessage" "$queue_arn"   || rc=1 ;;
+    republish) simulate "s3:DeleteObject" "$marker_arn"  || rc=1 ;;
+  esac
+
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR: the runner is not permitted to perform this action." >&2
+    echo "  Grant it on the Travis deploy principal $(policy_source_arn) and re-run." >&2
+    exit 1
+  fi
+  echo "  (an inconclusive '?' above means the simulation itself was denied, not the action --"
+  echo "   in that case ADDF_DRY_RUN=true still cannot prove the write will succeed)"
 }
 
 # ---------------------------------------------------------------- backfill
@@ -151,6 +218,7 @@ fi
 
 env_profile "$TARGET_ENV"
 require_aws
+preflight
 
 case "$ACTION" in
   backfill)  do_backfill ;;
