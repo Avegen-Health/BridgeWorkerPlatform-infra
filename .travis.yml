@@ -25,9 +25,17 @@ stages:
 - name: validate
 - name: deploy
   if: type = push
+# Gated operator actions (ADDF implementation-plan §3b.4). Never runs on a push:
+# it requires an env var that only an API-triggered build supplies, so it cannot
+# fire by accident. Trigger with ADDF_BACKFILL=uat (participant-version backfill)
+# or ADDF_REPUBLISH=uat (force today's re-publish). See scripts/addf-ops.sh.
+- name: addf-ops
+  if: env(ADDF_BACKFILL) IS present OR env(ADDF_REPUBLISH) IS present
 jobs:
   include:
   - stage: validate
     script: cfn-lint ./templates/**/* --ignore-checks W2001
   - stage: deploy
     script: sceptre launch $TRAVIS_BRANCH --yes
+  - stage: addf-ops
+    script: ./scripts/addf-ops.sh
