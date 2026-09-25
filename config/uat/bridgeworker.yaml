@@ -47,3 +47,9 @@ parameters:
   # 24h, so it is only meaningful once a daily publish is actually expected - arming it any
   # earlier would have paged on a pipeline that was not running yet.
   AddfPublishHeartbeatActionsEnabled: 'true'
+  # Both heartbeat metrics are starved on this env: nothing writes to either catalina.out log group on the
+  # current instance (stdout is captured by journald->rsyslog into /var/log/messages, tagged "server:"), so
+  # bridgeworker-uat-HeartbeatCount and -AddfPublishHeartbeatCount have had no datapoints since 2026-09-22 and
+  # both breaching alarms have been falsely paging bridge+uat_sns_notif@ ever since. Verified the lines are
+  # present in /var/log/messages: heartbeat ~48/day, "ADDF publish succeeded" at 2026-09-25T00:04:41Z.
+  MessagesLogMetricFiltersEnabled: 'true'

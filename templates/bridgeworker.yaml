@@ -112,8 +112,20 @@ Parameters:
       Arm the daily publish-heartbeat alarm (§6.4). Keep 'false' while addf.publish.enabled=false so the alarm
       does not page on the (expected) absence of publish-success logs; flip to 'true' in Phase 8 when publish goes
       live. When on, a missing daily "ADDF publish succeeded" log fires the alarm (dead scheduler / wedged publish).
+  MessagesLogMetricFiltersEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >-
+      Also read the heartbeat metrics from the /var/log/messages log group. On some instances the app's stdout is
+      captured by journald->rsyslog (tagged "server:") instead of landing in /var/log/tomcat/catalina.out, which
+      leaves the catalina.out-based filters permanently starved. Enable per-env only where that log group exists
+      and is actually being written - a MetricFilter on a non-existent log group fails the stack update.
 Conditions:
   AddfPublishHeartbeatActionsOn: !Equals [!Ref AddfPublishHeartbeatActionsEnabled, 'true']
+  MessagesLogMetricFiltersOn: !Equals [!Ref MessagesLogMetricFiltersEnabled, 'true']
   # Emit bridge.server to the EB env for uat only, so dev/prod EB environments are left byte-identical to today
   # (this rollout is uat-only). Widen when those envs are rolled out and their BridgeServer values are set.
   IsUat: !Equals [!Ref BridgeEnv, uat]
@@ -924,6 +936,64 @@ Resources:
       Period: 86400
       Statistic: Sum
       TreatMissingData: breaching
+
+  # ---- Heartbeat filters on /var/log/messages -------------------------------
+  # Both heartbeat alarms above read metrics produced by filters on the two catalina.out log groups. On
+  # bridgeworker-uat's current instance nothing is written to either: tomcat8/catalina.out has never existed on
+  # this platform, and the app's stdout is captured by journald->rsyslog and shipped to the EB-managed
+  # /var/log/messages log group instead, syslog-tagged "server:". The heartbeat lines are present and correct -
+  # they are simply in a log group nothing filters. Both alarms are treatMissingData=breaching, so that silence
+  # reads as a page, and neither alarm can clear or re-fire while it lasts.
+  #
+  # These filters add the missing source. They write to the SAME metric names as their catalina.out counterparts,
+  # so the existing alarms pick the data up with no alarm change at all. The catalina.out filters are deliberately
+  # left in place: they are the correct source on instances that do write it (bridge-exporter-uat still does), and
+  # only one capture path is ever live on a given instance, so the metric is not double-counted.
+  #
+  # The log group is EB-managed (created on first stream, retention "never expire") and is NOT declared as a
+  # resource here on purpose - CloudFormation cannot create a log group that already exists, and declaring it
+  # would also overwrite EB's retention.
+  #
+  # The heartbeat pattern is deliberately narrower than the catalina.out one. /var/log/messages also carries
+  # Tomcat's clearReferencesThreads warnings, whose stack traces quote HeartbeatLogger; the loose pattern used on
+  # catalina.out matches those too and would count app restarts as heartbeats. Verified with
+  # `aws logs test-metric-filter` against real lines: loose matches 2/4, this pattern matches 1/4 (the real line).
+  MessagesHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Condition: MessagesLogMetricFiltersOn
+    Properties:
+      LogGroupName: !Join
+        - '/'
+        - - /aws/elasticbeanstalk
+          - !Ref 'AWS::StackName'
+          - var/log/messages
+      FilterPattern: '"HeartbeatLogger - Logging heartbeat"'
+      MetricTransformations:
+        -
+          MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - HeartbeatCount
+  MessagesAddfPublishHeartbeatMetricFilter:
+    Type: "AWS::Logs::MetricFilter"
+    Condition: MessagesLogMetricFiltersOn
+    Properties:
+      LogGroupName: !Join
+        - '/'
+        - - /aws/elasticbeanstalk
+          - !Ref 'AWS::StackName'
+          - var/log/messages
+      FilterPattern: '"ADDF publish succeeded"'
+      MetricTransformations:
+        -
+          MetricValue: "1"
+          MetricNamespace: "LogMetrics/Health"
+          MetricName: !Join
+            - '-'
+            - - !Ref 'AWS::StackName'
+              - AddfPublishHeartbeatCount
 
 Outputs:
   AWSSNSTopic:
