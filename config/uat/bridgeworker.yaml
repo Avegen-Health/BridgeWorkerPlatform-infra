@@ -36,8 +36,19 @@ parameters:
   AddfExportStoreBucket: org-gvbridge-addf-exportstore-uat
   AddfExportRequestSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-Request-uat
   AddfExportDlqSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-DLQ-uat
-  # Azure staging container (GV-EU sub, account gvbridgeaddfexportuat, RG rg-research-hub-gv-bridge-addf-export, eastus)
-  AddfAzureContainerUrl: https://gvbridgeaddfexportuat.blob.core.windows.net/addf-export
+  # Azure staging container.
+  #
+  # TEMPORARY (2026-09-28): pointed at the throwaway test account `gvbridgeaddfexporttest`
+  # to exercise an account/SAS swap end to end. Revert to the real ADDI-facing account when
+  # the test is done:
+  #   https://gvbridgeaddfexportuat.blob.core.windows.net/addf-export
+  #   (GV-EU sub, account gvbridgeaddfexportuat, RG rg-research-hub-gv-bridge-addf-export, eastus)
+  #
+  # A SAS is scoped to one account+container, so the URL and /bridgeworker-uat/AddfBlobSasToken
+  # must move together - change one without the other and every upload 403s. The token is a
+  # SecureString in SSM and is rotated out of band (ssm put-parameter --overwrite) before this
+  # stack is relaunched; sceptre only resolves whatever is in SSM at deploy time.
+  AddfAzureContainerUrl: https://gvbridgeaddfexporttest.blob.core.windows.net/addf-export
   AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
   AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
   AddfExportEnabled: 'false'
