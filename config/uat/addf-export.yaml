@@ -8,13 +8,17 @@ parameters:
   # uat runs on the -staging general worker queue (see config/uat/bridgeworker.yaml WorkerSqsQueueUrl),
   # NOT Bridge-WorkerPlatform-Request-uat. The publish message must ride that exact queue's poller.
   PublishTargetQueueArn: arn:aws:sqs:us-east-1:433864969993:Bridge-WorkerPlatform-Request-staging
-  # TEMPORARY fast schedule for interactive testing on uat. Revert to cron(0 7 * * ? *)
-  # (07:00 UTC daily = US night / off-peak) once testing is done.
+  # 07:00 UTC daily = US night / off-peak. This is the intended steady state; the temporary
+  # rate(5 minutes) that had been live since 2026-09-23 is reverted here (2026-09-29).
   #
-  # Note: publish is idempotent on the biaffect-3/_publish/<date>.done marker, so a 5-minute
-  # tick only produces one real delivery per UTC day - later ticks short-circuit on
-  # isPublished() in 0s. To force a re-publish, delete that day's .done marker in the Azure
-  # container and wait for the next tick.
+  # Note: publish is idempotent on the biaffect-3/_publish/<date>.done marker, which lives in the
+  # S3 export store (org-gvbridge-addf-exportstore-uat), NOT in the Azure container - see
+  # PublishMarker.isPublished(). A fast tick therefore only ever produced one real delivery per
+  # UTC day; later ticks short-circuited in 0s. Forcing a re-publish means deleting that day's S3
+  # marker (scripts/addf-ops.sh, ADDF_REPUBLISH=uat), which is destructive for keyboard_sessions
+  # if that date already wrote a part file - SnapshotDeltaBuilder.buildKeyboard overwrites its
+  # part rather than read-merging it, unlike the other nine tables. Prefer waiting for the next
+  # UTC day: it writes a new part key and still carries all staged rows.
   #
   # Previous temporary near-term schedules, each reverted afterwards:
   #  - 2026-09-22, rate(5 minutes): scheduler -> queue -> AddfPublishWorker dispatch (publish still disabled,
@@ -22,5 +26,7 @@ parameters:
   #  - 2026-09-23, rate(10 minutes): first real end-to-end publish. Snapshot built, blobs uploaded to the uat
   #    Azure container, and biaffect-3/_publish/2026-09-23.done written - a marker that is only created after the
   #    upload confirms. Later ticks correctly short-circuited on isPublished() in 0s.
-  PublishScheduleExpression: rate(5 minutes)
+  #  - 2026-09-23 to 2026-09-29, rate(5 minutes): left on through the §3b.4 backfill verification and the
+  #    2026-09-28 Azure account-swap rehearsal (PR #17); reverted here alongside the addidatastorage1 swap.
+  PublishScheduleExpression: cron(0 7 * * ? *)
   PublishScheduleState: ENABLED
