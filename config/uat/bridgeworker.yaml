@@ -38,17 +38,22 @@ parameters:
   AddfExportDlqSqsQueueUrl: https://sqs.us-east-1.amazonaws.com/433864969993/Bridge-ADDF-Export-DLQ-uat
   # Azure staging container.
   #
-  # TEMPORARY (2026-09-28): pointed at the throwaway test account `gvbridgeaddfexporttest`
-  # to exercise an account/SAS swap end to end. Revert to the real ADDI-facing account when
-  # the test is done:
+  # 2026-09-29: repointed at the ADDI-supplied account `addidatastorage1`, container
+  # `biaffect-staging`. This replaces the throwaway `gvbridgeaddfexporttest` used on 2026-09-28
+  # to rehearse the account/SAS swap (PR #17), which in turn replaced the GV-owned
   #   https://gvbridgeaddfexportuat.blob.core.windows.net/addf-export
   #   (GV-EU sub, account gvbridgeaddfexportuat, RG rg-research-hub-gv-bridge-addf-export, eastus)
   #
   # A SAS is scoped to one account+container, so the URL and /bridgeworker-uat/AddfBlobSasToken
   # must move together - change one without the other and every upload 403s. The token is a
-  # SecureString in SSM and is rotated out of band (ssm put-parameter --overwrite) before this
-  # stack is relaunched; sceptre only resolves whatever is in SSM at deploy time.
-  AddfAzureContainerUrl: https://gvbridgeaddfexporttest.blob.core.windows.net/addf-export
+  # SecureString in SSM and is rotated out of band (ssm put-parameter --overwrite) BEFORE this
+  # stack is relaunched; sceptre only resolves whatever is in SSM at deploy time, so merging
+  # this line ahead of the SSM write hands EB a new URL with the previous account's token.
+  #
+  # The destination account firewall must allow the worker's dedicated ADDF egress EIP
+  # 184.193.232.51 (eipalloc-0382e6bbb08fb5c72). A firewall 403 and a bad-SAS 403 are
+  # indistinguishable in the worker log - check the firewall before re-cutting the token.
+  AddfAzureContainerUrl: https://addidatastorage1.blob.core.windows.net/biaffect-staging
   AddfBlobSasToken: !ssm /bridgeworker-uat/AddfBlobSasToken
   AddfBlobSasExpiry: !ssm /bridgeworker-uat/AddfBlobSasExpiry
   AddfExportEnabled: 'false'
